@@ -363,3 +363,7 @@ input.auto,select.auto{background:var(--accent-soft);border-color:var(--accent)}
 .colis-tot{font-size:13.5px;color:var(--muted)}
 .colis-tot b{color:var(--ink)}
 @media (max-width:560px){.colis-head,.colis-row{grid-template-columns:18px repeat(4,minmax(0,1fr)) 28px;gap:4px}.colis-head span{font-size:10.5px}.colis-row input{padding:7px 5px;font-size:14px}}
+
+/* Attestation de réception */
+.att-box{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2)}
+.att-box .sub{display:block;color:var(--muted);font-size:12.5px}

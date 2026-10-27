@@ -258,6 +258,30 @@ app.delete('/api/files/:id', needAuth, wrap(async (req, res) => {
 
 /* ---------- Suivi DHL ---------- */
 app.get('/api/dhl/status', needAuth, (req, res) => res.json({ configured: dhl.configured() }));
+
+/* ---------- Envoi d'e-mails (Brevo) ---------- */
+const BREVO = process.env.BREVO_API_KEY || '';
+const MAIL_FROM = process.env.MAIL_FROM || '';
+const MAIL_NAME = process.env.MAIL_FROM_NAME || 'Prismea';
+app.get('/api/mail/status', needAuth, (req, res) => res.json({ configured: !!(BREVO && MAIL_FROM), from: MAIL_FROM }));
+app.post('/api/mail', express.json({ limit: '15mb' }), needAuth, wrap(async (req, res) => {
+  if (!BREVO || !MAIL_FROM) return res.status(503).json({ error: 'mail_non_configure' });
+  const { to, subject, text, attachments, replyTo } = req.body || {};
+  if (!to || !/^\S+@\S+\.\S+$/.test(String(to))) return res.status(400).json({ error: 'destinataire' });
+  const esc = s => String(s || '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const body = {
+    sender: { email: MAIL_FROM, name: MAIL_NAME },
+    to: [{ email: String(to) }],
+    subject: String(subject || '').slice(0, 200),
+    htmlContent: '<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5">' + esc(text).replace(/\n/g, '<br>') + '</div>',
+    textContent: String(text || ''),
+  };
+  if (replyTo && /^\S+@\S+\.\S+$/.test(String(replyTo))) body.replyTo = { email: String(replyTo) };
+  if (Array.isArray(attachments) && attachments.length) body.attachment = attachments.slice(0, 5).map(a => ({ name: String(a.name).slice(0, 120), content: String(a.content) }));
+  const r = await fetch('https://api.brevo.com/v3/smtp/email', { method: 'POST', headers: { 'api-key': BREVO, 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) { const t = await r.text(); console.error('Brevo', r.status, t.slice(0, 300)); return res.status(502).json({ error: 'envoi_refuse' }); }
+  res.json({ ok: true });
+}));
 app.post('/api/dhl/refresh/:venteId', needAuth, wrap(async (req, res) => {
   if (!dhl.configured()) return res.status(503).json({ error: 'cle_dhl_absente' });
   const r = await dhl.refreshVente(req.params.venteId);

@@ -138,14 +138,14 @@ async function start(user){
   if(user.mustChange){showChangePw(user);return}
   document.body.classList.remove('auth');
   $('#app').innerHTML='<p class="muted" style="padding:40px 0">Chargement des données…</p>';
-  const [st,dh]=await Promise.all([api('/api/state'),api('/api/dhl/status').catch(()=>({configured:false}))]);
+  const [st,dh,ml]=await Promise.all([api('/api/state'),api('/api/dhl/status').catch(()=>({configured:false})),api('/api/mail/status').catch(()=>({configured:false}))]);
   Sync.state=st.state;Sync.since=st.now;Sync.snap=current();
-  window.__PRISMEA__={state:st.state,user,dhl:!!dh.configured};
+  window.__PRISMEA__={state:st.state,user,dhl:!!dh.configured,mail:ml};
   const tr=$('#test-reset');if(tr)tr.hidden=false;
   const u=$('#user');u.hidden=false;
   u.querySelector('b').textContent=user.nom.split(' ')[0];
   $('#logout').onclick=async()=>{try{await flush()}catch(e){}await fetch('/api/logout',{method:'POST',credentials:'same-origin'});location.hash='';location.reload()};
-  const s=document.createElement('script');s.src='/app.js?v=7';
+  const s=document.createElement('script');s.src='/app.js?v=8';
   s.onload=()=>{flush().catch(()=>{});Sync.pollT=setTimeout(poll,12000)};
   document.body.appendChild(s);
 }

@@ -1080,7 +1080,7 @@ const TRANSPORTEURS={
 const EXP_STATUTS=[['preparer','À préparer','neutral'],['expedie','Expédié','acc'],['transit','En transit','acc'],['douane','En douane','warn'],['livre','Livré','ok'],['incident','Incident','bad']];
 const expOf=v=>v.expedition||{};
 const expPill=v=>{const e=expOf(v);if(!e.statut&&!e.suivi)return'';const s=EXP_STATUTS.find(x=>x[0]===(e.statut||'preparer'))||EXP_STATUTS[0];return`<span class="pill ${s[2]}">${s[1]}</span>`};
-const DOC_CATS=['Bordereau DHL','Déclaration d\'export (DAE)','Avis de sortie','Preuve de livraison','Attestation de réception','Facture commerciale','Facture fournisseur','Photo','Autre'];
+const DOC_CATS=['Bordereau DHL','Déclaration d\'export (DAE)','Avis de sortie','Preuve de livraison','Attestation de réception','Attestation envoyée (à signer)','Facture commerciale','Facture fournisseur','Photo','Autre'];
 const fmtSize=b=>b>1048576?(b/1048576).toFixed(1).replace('.',',')+' Mo':Math.max(1,Math.round(b/1024))+' Ko';
 
 let vdLast='';
@@ -1098,7 +1098,7 @@ function venteDetail(id,tab){
   <dl class="totals" style="max-width:320px;margin-left:auto">${v.rem?`<dt>Remise ${nf.format(v.remise)} %</dt><dd>−${money(v.rem)}</dd>`:''}${taxLines(v,regOf(v),v.tvaIntra)}</dl>`;
   else if(vdTab==='reglements')body=`${regs.length?`<div class="docs">${regs.map(r=>`<div class="doc-row static"><span><b>${money(r.montant)}</b><span class="sub">${dF.format(new Date(r.date))} · ${esc(r.mode)}${regInfo(r)?' · '+esc(regInfo(r)):''}</span></span>${closedWeek(r.date)?'<span class="hint">Semaine clôturée</span>':`<button class="link danger-link" data-act="k-regdel" data-id="${r.id}">Supprimer</button>`}</div>`).join('')}</div>`:'<p class="muted">Aucun règlement pour cette facture.</p>'}
   <dl class="totals" style="max-width:320px;margin-left:auto"><dt>Total facturé</dt><dd>${money(v.ttc)}</dd><dt>Réglé</dt><dd>${money(paidOf(v))}</dd><dt class="big">Reste à payer</dt><dd class="big">${money(resteOf(v))}</dd></dl>`;
-  else if(vdTab==='documents')body=`${assetsNS?`<label class="drop small" id="vd-drop" for="vd-file"><b>Ajouter des documents</b><span>Bordereau DHL, facture, photo… · PDF ou image, 20 Mo maximum</span>
+  else if(vdTab==='documents')body=attBlock(v)+`${assetsNS?`<label class="drop small" id="vd-drop" for="vd-file"><b>Ajouter des documents</b><span>Bordereau DHL, facture, photo… · PDF ou image, 20 Mo maximum</span>
     <input id="vd-file" type="file" multiple accept=".pdf,image/*,.txt,.csv" hidden data-vid="${v.id}"></label><p class="scan-msg" id="vd-msg" role="status"></p>`
     :`<p class="notice" style="margin:0">L'ajout de documents n'est possible que pour le propriétaire de Prismea, dans claude.ai.</p>`}
   ${docs.length?`<div class="docs">${[...docs].sort((a,b)=>b.date.localeCompare(a.date)).map(d=>`<div class="doc-row static"><span class="doc-file"><span class="doc-ico">${/pdf/.test(d.type)?'PDF':/image/.test(d.type)?'IMG':'TXT'}</span><span><a href="/api/files/${esc(d.id)}" target="_blank" rel="noopener"><b>${esc(d.nom)}</b></a><span class="sub">${esc(d.cat)} · ${fmtSize(d.taille)} · ajouté le ${dF.format(new Date(d.date))}</span></span></span>
@@ -1939,7 +1939,104 @@ document.addEventListener('change',async e=>{
   const t=e.target;if(!t.dataset||!t.dataset.dzcat||!t.files[0])return;
   const vid=t.dataset.vid,cat=t.dataset.dzcat,file=t.files[0];t.value='';
   const v=S.ventes.find(x=>x.id===vid);if(v&&saveDouane(v))save();
-  await uploadDocs(vid,[file],cat,'douane');
+  await uploadDocs(vid,[file],cat,t.dataset.back||'douane');
+});
+
+/* ---------- Attestation de réception (à faire signer par le client) ---------- */
+function attestationPDF(v){
+  const {jsPDF}=window.jspdf;const pdf=new jsPDF({unit:'mm',format:'a4'});
+  const txt=s=>String(s??'').replace(/[  ]/g,' ').replace(/□/g,'/').replace(/[−–]/g,'-').replace(/[«»]/g,'"');
+  const s=S.societe,c=cli(v.clientId)||{},p=paysByCode(c.pays),e=expOf(v),reg=regOf(v);
+  const L=18,R=192;let y=20;
+  pdf.setFont('helvetica','bold');pdf.setFontSize(17);pdf.text('ATTESTATION DE RÉCEPTION',L,y);
+  pdf.setFont('helvetica','italic');pdf.setFontSize(10.5);pdf.setTextColor(90);pdf.text('Proof of receipt of goods',L,y+6);pdf.setTextColor(0);
+  pdf.setFont('helvetica','normal');pdf.setFontSize(9.5);
+  pdf.text(txt(`Facture / Invoice n° ${v.facture} du ${dF.format(new Date(v.date))}`),R,y,{align:'right'});
+  pdf.text(txt(`Vente / Sale ${v.num}`),R,y+5,{align:'right'});
+  y+=16;
+  const block=(title,lines,x)=>{pdf.setFontSize(8);pdf.setTextColor(110);pdf.text(title,x,y);pdf.setTextColor(0);pdf.setFont('helvetica','bold');pdf.setFontSize(10.5);pdf.text(txt(lines[0]||''),x,y+5.5);
+    pdf.setFont('helvetica','normal');pdf.setFontSize(9);lines.slice(1).filter(Boolean).forEach((t,i)=>pdf.text(txt(t),x,y+10.5+i*4.4))};
+  block('VENDEUR / SELLER',[s.nom,s.adresse,[s.cp,s.ville].filter(Boolean).join(' ')+(s.ville?', France':''),s.tvaIntra?'TVA / VAT : '+s.tvaIntra:''],L);
+  block('ACHETEUR / BUYER',[c.nom,...(c.adresse||'').split('\n'),[c.ville,p?p[1]:''].filter(Boolean).join(', '),v.tvaIntra||c.tvaIntra?'TVA / VAT : '+(v.tvaIntra||c.tvaIntra):''],108);
+  y+=38;
+  const transp=[e.transporteur||'DHL',e.suivi?`lettre de transport n° ${e.suivi}`:'',e.date?`expédiées le ${dF.format(new Date(e.date))}`:''].filter(Boolean).join(', ');
+  const transpEn=[e.transporteur||'DHL',e.suivi?`waybill no. ${e.suivi}`:'',e.date?`shipped on ${dF.format(new Date(e.date))}`:''].filter(Boolean).join(', ');
+  pdf.setFontSize(10);
+  let w=pdf.splitTextToSize(txt(`Nous soussignés, ${c.nom||'le client'}, attestons avoir reçu les marchandises désignées ci-dessous, transportées depuis la France par ${transp}.`),R-L);pdf.text(w,L,y);y+=w.length*4.8+1;
+  pdf.setFont('helvetica','italic');pdf.setTextColor(90);pdf.setFontSize(9);
+  w=pdf.splitTextToSize(txt(`We, the undersigned, hereby certify that we have received the goods listed below, transported from France by ${transpEn}.`),R-L);pdf.text(w,L,y);y+=w.length*4.3+4;
+  pdf.setFont('helvetica','normal');pdf.setTextColor(0);
+  const body=v.lignes.map(l=>[txt(l.etiquette),txt(l.designation+(l.detail?' - '+l.detail:'')),String(l.qte)]);
+  const nb=v.lignes.reduce((t,l)=>t+l.qte,0);
+  if(pdf.autoTable){pdf.autoTable({startY:y,head:[['Réf.','Désignation / Description','Qté / Qty']],body,foot:[['','Total montures / Total frames',String(nb)]],margin:{left:L,right:210-R},
+    styles:{font:'helvetica',fontSize:9,cellPadding:2},headStyles:{fillColor:[10,102,112],textColor:255},footStyles:{fillColor:[240,243,245],textColor:20,fontStyle:'bold'},columnStyles:{0:{cellWidth:22},2:{halign:'right',cellWidth:24}},showFoot:'lastPage'});y=pdf.lastAutoTable.finalY+10}
+  else{body.forEach(r=>{pdf.text(r.join('   '),L,y);y+=5});y+=6}
+  if(y>200){pdf.addPage();y=24}
+  const field=(fr,en,x,wid)=>{pdf.setFontSize(9);pdf.text(txt(fr),x,y);pdf.setFont('helvetica','italic');pdf.setTextColor(110);pdf.setFontSize(8);pdf.text(en,x,y+4);pdf.setFont('helvetica','normal');pdf.setTextColor(0);pdf.setDrawColor(150);pdf.line(x,y+12,x+wid,y+12)};
+  field('Date de réception','Date of receipt',L,78);field('Lieu de réception (ville, pays)','Place of receipt (city, country)',108,84);y+=20;
+  field('Nom et qualité du signataire','Name and position of signatory',L,78);y+=20;
+  pdf.setFontSize(9);pdf.text('Signature et cachet de l\'entreprise',L,y);pdf.setFont('helvetica','italic');pdf.setTextColor(110);pdf.setFontSize(8);pdf.text('Signature and company stamp',L,y+4);
+  pdf.setTextColor(0);pdf.setFont('helvetica','normal');pdf.setDrawColor(150);pdf.roundedRect(L,y+7,90,32,2,2);y+=48;
+  pdf.setFontSize(8);pdf.setTextColor(100);
+  const foot=[`Merci de retourner ce document daté, signé et revêtu de votre cachet${s.email?' à '+s.email:''}. / Please return this document dated, signed and stamped${s.email?' to '+s.email:''}.`,
+    reg==='ue'?'Attestation établie conformément à l\'article 45 bis du règlement d\'exécution (UE) n° 282/2011 (livraison intracommunautaire, article 262 ter I du CGI).':''].filter(Boolean);
+  foot.forEach(t=>{const ww=pdf.splitTextToSize(txt(t),R-L);pdf.text(ww,L,Math.min(y,282));y+=ww.length*3.8+1});
+  return pdf.output('arraybuffer');
+}
+const abToB64=ab=>{let s='';const b=new Uint8Array(ab);for(let i=0;i<b.length;i+=0x8000)s+=String.fromCharCode.apply(null,b.subarray(i,i+0x8000));return btoa(s)};
+const attFile=v=>`Attestation de reception ${v.facture}.pdf`;
+function attBlock(v){
+  const a=v.attestation||{},signed=docsCat(v,'Attestation de réception');
+  const st=signed.length?`<span class="pill ok">Signée reçue</span>`:a.envoyeeLe?`<span class="pill warn">Envoyée, en attente de signature</span>`:`<span class="pill neutral">Pas encore envoyée</span>`;
+  return`<div class="att-box"><div class="row-between"><div><b>Attestation de réception</b><span class="sub">${a.envoyeeLe?`Envoyée le ${dF.format(new Date(a.envoyeeLe))}${a.a?' à '+esc(a.a):''}${a.mode==='messagerie'?' (via votre messagerie)':''}`:'À faire signer par le client à la réception des montures.'}</span></div>${st}</div>
+    <div class="row-btns" style="justify-content:flex-start">
+      <button class="btn small${a.envoyeeLe?'':' primary'}" data-act="att-send" data-id="${v.id}">${a.envoyeeLe?'Renvoyer':'Préparer et envoyer'}</button>
+      <button class="btn small" data-act="att-pdf" data-id="${v.id}">Télécharger le PDF</button>
+      ${assetsNS?`<label class="btn small${a.envoyeeLe&&!signed.length?' primary':''}" style="cursor:pointer">Joindre l'attestation signée<input type="file" hidden accept=".pdf,image/*" data-dzcat="Attestation de réception" data-vid="${v.id}" data-back="documents"></label>`:''}
+    </div></div>`;
+}
+function attForm(id){
+  const v=S.ventes.find(x=>x.id===id);if(!v)return;const c=cli(v.clientId)||{},mail=window.__PRISMEA__.mail||{};
+  if(!window.jspdf){toast('Le module PDF n\'a pas pu se charger. Vérifiez la connexion internet.');return}
+  const sig=(window.__PRISMEA__.user||{}).nom||'';
+  const msg=`Bonjour,\n\nVeuillez trouver ci-joint l'attestation de réception relative à notre facture ${v.facture}${expOf(v).suivi?' (envoi DHL n° '+expOf(v).suivi+')':''}.\n\nÀ réception des montures, merci de nous la retourner datée, signée et revêtue de votre cachet, en réponse à ce message.\n\nNous vous remercions par avance.\n\nCordialement,\n${sig}\n${S.societe.nom||''}`;
+  openModal('Envoyer l\'attestation de réception',`${c.nom||''} · facture ${v.facture}`,`
+  <fieldset>
+    <label class="full">E-mail du client<input id="at-to" type="email" value="${esc(c.email||'')}" placeholder="adresse@client.com"><span class="hint">${c.email?'Repris de la fiche client':'Aucun e-mail dans la fiche client : saisissez-le (il sera ajouté à la fiche)'}</span></label>
+    <label class="full">Objet<input id="at-subj" value="${esc(`Attestation de réception – facture ${v.facture}`)}"></label>
+    <label class="full">Message<textarea id="at-msg" rows="9">${esc(msg)}</textarea></label>
+  </fieldset>
+  <p class="hint" style="margin:0">L'attestation PDF (${esc(attFile(v))}) est jointe automatiquement et une copie est rangée dans les documents de la vente.</p>
+  ${mail.configured?'':'<div class="lu-box warn">L\'envoi direct depuis Prismea n\'est pas encore activé. Le bouton ci-dessous télécharge le PDF et ouvre votre messagerie avec le message prêt : il vous restera à y joindre le PDF.</div>'}`,
+  `<button class="btn" data-act="k-open" data-id="${v.id}">Retour</button><button class="btn primary" id="at-ok">${mail.configured?'Envoyer':'Télécharger et ouvrir ma messagerie'}</button>`,()=>{
+    $('#at-to').focus();
+    $('#at-ok').onclick=async()=>{
+      const to=$('#at-to').value.trim(),subj=$('#at-subj').value.trim(),text=$('#at-msg').value;
+      if(!/^\S+@\S+\.\S+$/.test(to)){toast('Saisissez une adresse e-mail valide.');$('#at-to').focus();return}
+      const btn=$('#at-ok');btn.disabled=true;btn.textContent='Préparation…';
+      const ab=attestationPDF(v);
+      if(c.id&&!c.email){const cc=cli(c.id);if(cc)cc.email=to}
+      try{
+        if(mail.configured){
+          btn.textContent='Envoi…';
+          const r=await fetch('/api/mail',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({to,subject:subj,text,replyTo:S.societe.email||'',attachments:[{name:attFile(v),content:abToB64(ab)}]})});
+          if(!r.ok)throw new Error('envoi');
+        }else{
+          await offerFile(attFile(v),new Blob([ab],{type:'application/pdf'}));
+          const a=document.createElement('a');a.href=`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(text)}`;a.click();
+        }
+        if(assetsNS){try{const up=await assetsNS.upload(new File([ab],attFile(v),{type:'application/pdf'}),{type:'application/pdf'});
+          v.documents=v.documents||[];v.documents.push({id:up.id,nom:attFile(v),type:'application/pdf',taille:up.sizeBytes||ab.byteLength,date:new Date().toISOString(),cat:'Attestation envoyée (à signer)'})}catch(x){}}
+        v.attestation={envoyeeLe:new Date().toISOString(),a:to,mode:mail.configured?'prismea':'messagerie'};
+        save();render();venteDetail(v.id,'documents');toast(mail.configured?`Attestation envoyée à ${to}`:'PDF téléchargé : joignez-le au message ouvert dans votre messagerie');
+      }catch(x){btn.disabled=false;btn.textContent=mail.configured?'Envoyer':'Télécharger et ouvrir ma messagerie';toast('L\'envoi a échoué. Vérifiez l\'adresse ou réessayez.')}
+    };
+  });
+}
+document.addEventListener('click',e=>{
+  const b=e.target.closest('[data-act^="att-"]');if(!b)return;const v=S.ventes.find(x=>x.id===b.dataset.id);if(!v)return;
+  if(b.dataset.act==='att-send')attForm(v.id);
+  if(b.dataset.act==='att-pdf'){if(!window.jspdf){toast('Le module PDF n\'a pas pu se charger.');return}offerFile(attFile(v),new Blob([attestationPDF(v)],{type:'application/pdf'}))}
 });
 
 /* ---------- Routeur et événements ---------- */
