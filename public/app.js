@@ -1560,7 +1560,7 @@ function viewAchats(){
 }
 
 /* Fiche facture (création / modification) */
-function ffForm(f,pendingDoc){
+function ffForm(f,pendingDoc,lu){
   const isNew=!f||!f.id;f={fournisseurId:ach.four||'',date:isoD(new Date()),receptions:[],documents:pendingDoc?[pendingDoc]:[],...(f||{})};
   const st={docs:[...(f.documents||[])]};
   const recOpts=fid=>{
@@ -1570,7 +1570,12 @@ function ffForm(f,pendingDoc){
       :'<span class="hint">Aucune entrée de stock de ce fournisseur à rattacher.</span>';
   };
   const docsHtml=()=>st.docs.length?st.docs.map(d=>`<div class="doc-row static"><span class="doc-file"><span class="doc-ico">${/pdf/.test(d.type)?'PDF':'IMG'}</span><span><a href="/api/files/${esc(d.id)}" target="_blank" rel="noopener"><b>${esc(d.nom)}</b></a><span class="sub">${fmtSize(d.taille)}</span></span></span><button class="link danger-link" type="button" data-ffdocrm="${esc(d.id)}">Retirer</button></div>`).join(''):'<span class="hint">Aucun fichier joint.</span>';
-  openModal(isNew?'Nouvelle facture fournisseur':'Facture '+(f.ref||''),isNew?'':(fourOf(f.fournisseurId)||{}).nom||'',`
+  const NOMS={fournisseurId:'fournisseur',ref:'n° de facture',date:'date',echeance:'échéance',ht:'montant HT',tva:'TVA',ttc:'total TTC'};
+  const luMsg=!lu?'':lu.scan?'<div class="lu-box warn">Ce fichier ne contient pas de texte lisible (facture scannée ou photo) : complétez la fiche à la main.</div>'
+    :lu.erreur?'<div class="lu-box warn">Le PDF n\'a pas pu être lu automatiquement : complétez la fiche à la main.</div>'
+    :lu.found&&lu.found.length?`<div class="lu-box">Lu automatiquement dans le PDF : <b>${lu.found.map(k=>NOMS[k]).join(', ')}</b>. Vérifiez les champs surlignés avant d'enregistrer.${['fournisseurId','ref','date','ht'].filter(k=>!lu.found.includes(k)).length?` <span>À compléter : ${['fournisseurId','ref','date','ht'].filter(k=>!lu.found.includes(k)).map(k=>NOMS[k]).join(', ')}.</span>`:''}</div>`
+    :'<div class="lu-box warn">Aucune information reconnue dans ce PDF : complétez la fiche à la main.</div>';
+  openModal(isNew?'Nouvelle facture fournisseur':'Facture '+(f.ref||''),isNew?'':(fourOf(f.fournisseurId)||{}).nom||'',`${luMsg}
   <fieldset>
     <label class="full">Fournisseur <span class="req">*</span><select id="ff-f">${fourOptions(f.fournisseurId,true)}</select></label>
     <label>N° de facture fournisseur <span class="req">*</span><input id="ff-ref" value="${esc(f.ref||'')}" class="mono-in" spellcheck="false"></label>
@@ -1579,8 +1584,8 @@ function ffForm(f,pendingDoc){
   </fieldset>
   <fieldset><legend>Entrées de stock concernées</legend><div class="full brand-checks" id="ff-recs">${recOpts(f.fournisseurId)}</div></fieldset>
   <fieldset class="three"><legend>Montants</legend>
-    <label>Montant HT <span class="req">*</span><span class="suffix"><input id="ff-ht" type="number" min="0" step="0.01" value="${f.ht??''}"><span>€</span></span></label>
-    <label>TVA<span class="suffix"><input id="ff-tva" type="number" min="0" step="0.01" value="${f.tva??''}" placeholder="0"><span>€</span></span><span class="hint" id="ff-tvahint"></span></label>
+    <label>Montant HT <span class="req">*</span><span class="suffix"><input id="ff-ht" type="number" min="0" step="0.01" value="${f.ht!=null?(+f.ht).toFixed(2):''}"><span>€</span></span></label>
+    <label>TVA<span class="suffix"><input id="ff-tva" type="number" min="0" step="0.01" value="${f.tva!=null?(+f.tva).toFixed(2):''}" placeholder="0"><span>€</span></span><span class="hint" id="ff-tvahint"></span></label>
     <label>Total TTC<span class="suffix"><input id="ff-ttc" type="number" min="0" step="0.01" value="${f.ttc??''}" readonly><span>€</span></span></label>
   </fieldset>
   <fieldset><legend>Facture (PDF)</legend><div class="full" id="ff-docs">${docsHtml()}</div>
@@ -1593,7 +1598,7 @@ function ffForm(f,pendingDoc){
       const four=fo(),ht=+$('#ff-ht').value||0;
       if(src==='four'||src==='date'){if(four&&$('#ff-date').value&&(!f.echeance||src==='four'||src==='date')){$('#ff-ech').value=isoD(addDays($('#ff-date').value,delaiOf(four)))}}
       if(src!=='tva'&&four&&(src==='four'||src==='ht'||src==='recs')){$('#ff-tva').value=four.pays==='FR'?r2(ht*0.2).toFixed(2):'0.00'}
-      $('#ff-echhint').textContent=four?`Délai du fournisseur : ${delaiOf(four)} jours${four.conditions?' ('+four.conditions+')':''}`:'';
+      $('#ff-echhint').textContent=four?`Délai du fournisseur : ${delaiOf(four)} jours${four.conditions&&normTxt(four.conditions)!==normTxt(delaiOf(four)+' jours')?' ('+four.conditions+')':''}`:'';
       $('#ff-tvahint').textContent=four?(four.pays==='FR'?'Fournisseur français : TVA 20 % récupérable':'Fournisseur hors de France : pas de TVA facturée en général'):'';
       $('#ff-ttc').value=r2(ht+(+$('#ff-tva').value||0)).toFixed(2);
     };
@@ -1611,7 +1616,8 @@ function ffForm(f,pendingDoc){
       if(!(f.documents||[]).some(d=>d.id===id)&&assetsNS)assetsNS.delete(id).catch(()=>{});$('#ff-docs').innerHTML=docsHtml()});
     $('#ff-up').addEventListener('change',async e=>{const file=e.target.files[0];e.target.value='';if(!file)return;
       $('#ff-upmsg').textContent='Envoi du fichier…';try{st.docs.push(await uploadFF(file));$('#ff-docs').innerHTML=docsHtml();$('#ff-upmsg').textContent=''}catch(x){$('#ff-upmsg').textContent=x.message||'Le fichier n\'a pas pu être envoyé.'}});
-    if(isNew&&f.fournisseurId)sync('four');else sync('init');
+    if(isNew&&f.fournisseurId&&!lu)sync('four');else sync('init');
+    if(lu&&lu.found){const ids={fournisseurId:'ff-f',ref:'ff-ref',date:'ff-date',echeance:'ff-ech',ht:'ff-ht',tva:'ff-tva'};lu.found.forEach(k=>{const el=ids[k]&&$('#'+ids[k]);if(el)el.classList.add('auto')})}
     (isNew?$('#ff-f'):$('#ff-ref')).focus();
     $('#ff-ok').onclick=()=>{
       const four=fo(),ref=$('#ff-ref').value.trim(),date=$('#ff-date').value,ht=r2(+$('#ff-ht').value||0),tva=r2(+$('#ff-tva').value||0);
@@ -1702,14 +1708,124 @@ document.addEventListener('change',async e=>{
   else if(t.id==='ff-file'&&t.files[0]){const file=t.files[0];t.value='';await dropFF(file)}
 });
 async function dropFF(file){
-  toast('Envoi de la facture…');
-  try{const doc=await uploadFF(file);ffForm(null,doc);
-    const m=String(file.name).match(/(?:fact(?:ure)?|inv(?:oice)?|n°|no)[\s_\-]*([A-Z0-9][A-Z0-9\-\/]{2,})/i);if(m&&$('#ff-ref'))$('#ff-ref').value=m[1]}
-  catch(x){toast(x.message)}
+  toast('Lecture de la facture…');
+  let doc,lu;
+  try{[doc,lu]=await Promise.all([uploadFF(file),readInvoiceFile(file)])}catch(x){toast(x.message);return}
+  const pre={};
+  if(lu&&lu.found)lu.found.forEach(k=>{if(k!=='ttc')pre[k]=lu[k]});
+  if(!pre.ref){const m=String(file.name).match(/(?:fact(?:ure)?|inv(?:oice)?|n°|no)[\s_\-]*([A-Z0-9][A-Z0-9\-\/]{2,})/i);if(m&&/\d/.test(m[1]))pre.ref=m[1]}
+  const four=fourOf(pre.fournisseurId);
+  if(four&&pre.date&&!pre.echeance)pre.echeance=isoD(addDays(pre.date,delaiOf(four)));
+  if(four&&pre.ht!=null&&pre.tva==null)pre.tva=four.pays==='FR'?r2(pre.ht*0.2):0;
+  if(pre.ht!=null)pre.ttc=r2(pre.ht+(pre.tva||0));
+  if(four&&pre.ht!=null){const taken=new Set(S.facturesF.flatMap(x=>x.receptions||[]));
+    const rc=S.receptions.find(r=>r.fournisseurId===four.id&&!taken.has(r.id)&&Math.abs(r.total-pre.ht)<0.5);if(rc)pre.receptions=[rc.id]}
+  ffForm(pre,doc,lu);
 }
 document.addEventListener('dragover',e=>{const dz=e.target.closest&&e.target.closest('#ff-drop');if(dz){e.preventDefault();dz.classList.add('over')}});
 document.addEventListener('dragleave',e=>{const dz=e.target.closest&&e.target.closest('#ff-drop');if(dz)dz.classList.remove('over')});
 document.addEventListener('drop',e=>{const dz=e.target.closest&&e.target.closest('#ff-drop');if(!dz)return;e.preventDefault();dz.classList.remove('over');const f=e.dataTransfer.files[0];if(f)dropFF(f)});
+
+/* ---------- Lecture automatique des factures fournisseurs (texte du PDF) ---------- */
+const PDFJS='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+const PDFJS_WORKER='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+let pdfjsReady=null;
+function loadPdfjs(){
+  if(window.pdfjsLib)return Promise.resolve(window.pdfjsLib);
+  if(!pdfjsReady)pdfjsReady=new Promise((ok,ko)=>{const s=document.createElement('script');s.src=PDFJS;
+    s.onload=()=>{window.pdfjsLib.GlobalWorkerOptions.workerSrc=PDFJS_WORKER;ok(window.pdfjsLib)};s.onerror=()=>{pdfjsReady=null;ko(new Error('pdf'))};document.head.appendChild(s)});
+  return pdfjsReady;
+}
+/* Texte du PDF, ligne par ligne (les éléments d'une même hauteur sont réunis) */
+async function pdfLines(file){
+  const lib=await loadPdfjs();
+  const pdf=await lib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
+  const lines=[];
+  for(let p=1;p<=Math.min(pdf.numPages,5);p++){
+    const tc=await (await pdf.getPage(p)).getTextContent(),rows=[];
+    tc.items.forEach(it=>{const s=(it.str||'').trim();if(!s)return;const y=it.transform[5],x=it.transform[4];
+      let r=rows.find(r=>Math.abs(r.y-y)<3);if(!r){r={y,items:[]};rows.push(r)}r.items.push({x,s})});
+    rows.sort((a,b)=>b.y-a.y).forEach(r=>lines.push(r.items.sort((a,b)=>a.x-b.x).map(i=>i.s).join(' ').replace(/\s+/g,' ')));
+  }
+  return lines;
+}
+const MOIS_FR=['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
+const MOIS_EN=['january','february','march','april','may','june','july','august','september','october','november','december'];
+const MOIS_IT=['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
+function findDates(line){
+  const out=[];let m;
+  const re1=/\b(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})\b/g;
+  while((m=re1.exec(line))){let y=+m[3];if(y<100)y+=2000;const d=+m[1],mo=+m[2];if(mo>=1&&mo<=12&&d>=1&&d<=31&&y>2000)out.push({iso:`${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`,i:m.index,len:m[0].length})}
+  const re2=/\b(\d{4})-(\d{2})-(\d{2})\b/g;
+  while((m=re2.exec(line)))out.push({iso:`${m[1]}-${m[2]}-${m[3]}`,i:m.index,len:m[0].length});
+  const names=[...MOIS_FR,...MOIS_EN,...MOIS_IT].join('|');
+  const re3=new RegExp(`\\b(\\d{1,2})(?:er)?\\s+(${names})\\s+(\\d{4})\\b`,'gi');
+  while((m=re3.exec(line))){const n=m[2].toLowerCase(),mo=[MOIS_FR,MOIS_EN,MOIS_IT].map(a=>a.indexOf(n)).find(i=>i>=0)+1;out.push({iso:`${m[3]}-${String(mo).padStart(2,'0')}-${String(+m[1]).padStart(2,'0')}`,i:m.index,len:m[0].length})}
+  const re4=new RegExp(`\\b(${MOIS_EN.join('|')})\\s+(\\d{1,2}),?\\s+(\\d{4})\\b`,'gi');
+  while((m=re4.exec(line))){const mo=MOIS_EN.indexOf(m[1].toLowerCase())+1;out.push({iso:`${m[3]}-${String(mo).padStart(2,'0')}-${String(+m[2]).padStart(2,'0')}`,i:m.index,len:m[0].length})}
+  return out.sort((a,b)=>a.i-b.i);
+}
+function parseAmount(s){
+  s=String(s).replace(/[\s\u00A0\u202F']/g,'');
+  if(/^\d{1,3}(\.\d{3})+,\d{1,2}$/.test(s))s=s.replace(/\./g,'').replace(',','.');
+  else if(/^\d{1,3}(,\d{3})+\.\d{1,2}$/.test(s))s=s.replace(/,/g,'');
+  else if(/^\d+,\d{1,2}$/.test(s))s=s.replace(',','.');
+  const n=parseFloat(s);return isFinite(n)?n:null;
+}
+/* Montants d'une ligne (avec décimales), en ignorant les dates et les pourcentages */
+function findAmounts(line){
+  let l=line;findDates(line).forEach(d=>{l=l.slice(0,d.i)+' '.repeat(d.len)+l.slice(d.i+d.len)});
+  const re=/(?<![\d.,])(\d{1,3}(?:[ \u00A0\u202F.,']\d{3})+[.,]\d{2}|\d+[.,]\d{2})(?![\d]|\s*%)/g,out=[];let m;
+  while((m=re.exec(l))){const v=parseAmount(m[1]);if(v!=null)out.push(v)}
+  return out;
+}
+const LBL={
+  ttc:/(total\s*t\.?t\.?c|montant\s*t\.?t\.?c|net\s*à\s*payer|total\s*à\s*payer|reste\s*à\s*payer|total\s*due|amount\s*due|balance\s*due|grand\s*total|invoice\s*total|total\s*amount|total\s*(?:incl|including)|totale\s*(?:fattura|documento|da\s*pagare)?|importo\s*totale)/i,
+  ht:/(total\s*h\.?t|montant\s*h\.?t|total\s*hors\s*taxes?|base\s*h\.?t|net\s*amount|sub\s*-?\s*total|total\s*net|total\s*(?:excl|excluding)|imponibile|totale\s*imponibile)/i,
+  tva:/(\bt\.?v\.?a\b|\bvat\b|\biva\b|\btax\b|\bmwst\b)/i
+};
+function amountFor(lines,re,exclude){
+  let best=null;
+  lines.forEach((ln,i)=>{if(!re.test(ln)||(exclude&&exclude.test(ln)&&!/total/i.test(ln.replace(exclude,''))))return;
+    let a=findAmounts(ln);if(!a.length&&lines[i+1])a=findAmounts(lines[i+1]);if(a.length)best=a[a.length-1]});
+  return best;
+}
+const normTxt=s=>String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,'');
+function parseInvoice(lines){
+  const text=lines.join('\n'),flat=normTxt(text),r={};
+  // fournisseur : n° de TVA, puis nom
+  const ownTva=normTxt(S.societe.tvaIntra);
+  let four=S.fournisseurs.find(f=>f.tvaIntra&&normTxt(f.tvaIntra).length>5&&normTxt(f.tvaIntra)!==ownTva&&flat.includes(normTxt(f.tvaIntra)));
+  if(!four)four=[...S.fournisseurs].sort((a,b)=>b.nom.length-a.nom.length).find(f=>normTxt(f.nom).length>=3&&flat.includes(normTxt(f.nom)));
+  if(!four){const mk=S.marques.find(b=>b.fournisseurId&&normTxt(b.nom).length>=3&&new RegExp('\\b'+b.nom.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b','i').test(text));if(mk)four=fourOf(mk.fournisseurId)}
+  if(four)r.fournisseurId=four.id;
+  // n° de facture
+  const reRef=/(?:facture|invoice|fattura|rechnung|factura)\s*(?:n[°oº.]?|no\.?|nr\.?|num[ée]ro|number|#)?\s*[:.\-]?\s*([A-Z0-9][A-Z0-9\-\/._]{2,})/i;
+  for(const ln of lines){const m=ln.match(reRef);if(m&&/\d/.test(m[1])&&!/^(du|date|of|del)$/i.test(m[1])){r.ref=m[1].replace(/[.:]$/,'');break}}
+  if(!r.ref){for(const ln of lines){const m=ln.match(/\b(?:n[°oº]|no\.?|nr\.?)\s*[:.]?\s*([A-Z0-9][A-Z0-9\-\/._]{2,})/i);if(m&&/\d/.test(m[1])){r.ref=m[1];break}}}
+  // dates
+  const near=re=>{for(const ln of lines){if(re.test(ln)){const d=findDates(ln);if(d.length)return d[d.length-1].iso}}return null};
+  r.echeance=near(/(échéance|echeance|due\s*date|payable|à\s*payer\s*avant|scadenza|date\s*limite)/i);
+  r.date=near(/(date\s*(de\s*)?(la\s*)?facture|invoice\s*date|date\s*d'?émission|data\s*(fattura|documento)|^date\b|\bdate\s*:|\bdu\s+\d)/i);
+  if(!r.date){const all=lines.flatMap(findDates).map(d=>d.iso).filter(d=>d!==r.echeance);if(all.length)r.date=all[0]}
+  // montants
+  r.ttc=amountFor(lines,LBL.ttc);
+  r.ht=amountFor(lines,LBL.ht);
+  r.tva=amountFor(lines,LBL.tva,/(n°|no\.?|number|intracom|identification|numéro|p\.?\s*iva|partita)/i);
+  if(r.tva!=null&&r.ht!=null&&r.ttc!=null&&Math.abs(r.ht+r.tva-r.ttc)>0.05)r.tva=r2(r.ttc-r.ht);
+  if(r.ht!=null&&r.ttc!=null&&r.tva==null)r.tva=r2(r.ttc-r.ht);
+  if(r.ht==null&&r.ttc!=null&&r.tva!=null)r.ht=r2(r.ttc-r.tva);
+  if(r.ht==null&&r.ttc!=null&&(!four||four.pays!=='FR')&&!LBL.tva.test(text)){r.ht=r.ttc;r.tva=0}
+  if(r.ht!=null&&r.tva!=null&&r.ttc==null)r.ttc=r2(r.ht+r.tva);
+  r.found=['fournisseurId','ref','date','echeance','ht','tva','ttc'].filter(k=>r[k]!=null);
+  r.textLen=text.replace(/\s/g,'').length;
+  return r;
+}
+async function readInvoiceFile(file){
+  if(!/pdf$/i.test(file.type)&&!/\.pdf$/i.test(file.name))return{scan:true};
+  try{const lines=await pdfLines(file);const r=parseInvoice(lines);if(r.textLen<30)return{scan:true};return r}
+  catch(e){return{erreur:true}}
+}
 
 /* ---------- Routeur et événements ---------- */
 function render(){
