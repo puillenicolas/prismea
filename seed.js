@@ -79,7 +79,7 @@ function buildState() {
     if (d > 6) {
       const st = d > 40 ? 'livre' : d > 20 ? pick(['livre', 'transit', 'douane']) : pick(['expedie', 'transit']);
       v.expedition = { transporteur: 'DHL', suivi: pad(Math.floor(1e9 + rnd() * 8e9), 10), date: isoD(addDays(date, 1)), statut: st,
-        livraison: st === 'livre' ? isoD(addDays(date, 6)) : '', poids: `${1 + Math.floor(rnd() * 3)} colis`, note: '' };
+        livraison: st === 'livre' ? isoD(addDays(date, 6)) : '', colis: Array.from({ length: 1 + Math.floor(rnd() * 2) }, () => ({ kg: r2(1.5 + rnd() * 6), l: 40, w: 30, h: 20 + Math.floor(rnd() * 3) * 10 })), note: '' };
     }
     if (reg === 'export' && v.expedition && v.expedition.statut === 'livre') {
       v.douane = { incoterm: 'DAP', declarant: 'DHL Express', mrn: '26FR' + String(1e12 + seqV * 7919).slice(-13) + '7', dateDecl: v.expedition.date,

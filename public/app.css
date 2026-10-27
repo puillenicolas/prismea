@@ -354,3 +354,12 @@ input.auto,select.auto{background:var(--accent-soft);border-color:var(--accent)}
 .ck.ok .ck-ico{border-color:var(--ok);background:var(--ok-soft)}
 .tab-n.ok-n{background:var(--ok-soft);color:var(--ok)}
 .tab-n.warn-n{background:var(--warn-soft);color:var(--warn)}
+
+/* Colis */
+.colis-box{display:flex;flex-direction:column;gap:8px}
+.colis-head,.colis-row{display:grid;grid-template-columns:28px repeat(4,minmax(0,1fr)) 34px;gap:8px;align-items:center}
+.colis-head span{font-size:12px;color:var(--muted);font-weight:600}
+.colis-row input{padding:8px 10px;text-align:right}
+.colis-tot{font-size:13.5px;color:var(--muted)}
+.colis-tot b{color:var(--ink)}
+@media (max-width:560px){.colis-head,.colis-row{grid-template-columns:18px repeat(4,minmax(0,1fr)) 28px;gap:4px}.colis-head span{font-size:10.5px}.colis-row input{padding:7px 5px;font-size:14px}}

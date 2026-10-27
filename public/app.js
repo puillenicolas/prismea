@@ -1039,6 +1039,27 @@ function semaineView(){
   ${clo?'<p class="hint">Semaine clôturée : ses règlements ne peuvent plus être ajoutés ni supprimés.</p>':''}`;
 }
 
+/* Colis d'une expédition : poids et dimensions ; poids volumétrique DHL Express = L × l × h / 5000 */
+const volKg=c=>(+c.l&&+c.w&&+c.h)?(+c.l)*(+c.w)*(+c.h)/5000:0;
+const nfk=new Intl.NumberFormat('fr-FR',{maximumFractionDigits:2});
+function colisRows(list){
+  return list.map((c,i)=>`<div class="colis-row" data-ci="${i}"><span class="mono">${i+1}</span>
+    <input type="number" min="0" step="0.01" data-cf="kg" id="c${i}kg" value="${c.kg??''}" placeholder="0,0" aria-label="Poids du colis ${i+1} en kg">
+    <input type="number" min="0" step="1" data-cf="l" id="c${i}l" value="${c.l??''}" placeholder="L" aria-label="Longueur du colis ${i+1}">
+    <input type="number" min="0" step="1" data-cf="w" id="c${i}w" value="${c.w??''}" placeholder="l" aria-label="Largeur du colis ${i+1}">
+    <input type="number" min="0" step="1" data-cf="h" id="c${i}h" value="${c.h??''}" placeholder="h" aria-label="Hauteur du colis ${i+1}">
+    <button class="icon-btn" type="button" data-act="colis-rm" data-ci="${i}" aria-label="Retirer le colis ${i+1}" ${list.length<2?'disabled':''}>×</button></div>`).join('');
+}
+function readColis(){
+  return [...document.querySelectorAll('#colis-rows .colis-row')].map(r=>{const g=f=>{const v=r.querySelector(`[data-cf="${f}"]`).value;return v===''?null:+v};return{kg:g('kg'),l:g('l'),w:g('w'),h:g('h')}})
+    .filter(c=>c.kg!=null||c.l!=null||c.w!=null||c.h!=null);
+}
+function colisTotal(list){
+  if(!list.length)return'';
+  const reel=list.reduce((t,c)=>t+(+c.kg||0),0),vol=list.reduce((t,c)=>t+volKg(c),0),tax=list.reduce((t,c)=>t+Math.max(+c.kg||0,volKg(c)),0);
+  return`${list.length} colis · poids réel <b>${nfk.format(reel)} kg</b>${vol?` · volumétrique ${nfk.format(vol)} kg · <span title="Poids retenu par DHL : le plus élevé des deux, colis par colis">taxable <b>${nfk.format(tax)} kg</b></span>`:''}`;
+}
+
 /* Détail d'une vente : onglets Facture · Règlements · Documents · Expédition */
 let vdTab='facture';
 let assetsNS=null;
@@ -1091,8 +1112,13 @@ function venteDetail(id,tab){
       <label>Date d'expédition<input id="x-date" type="date" value="${esc(e.date||'')}"></label>
       <label>Statut<select id="x-st">${EXP_STATUTS.map(([k,l])=>`<option value="${k}" ${k===(e.statut||'preparer')?'selected':''}>${l}</option>`).join('')}</select></label>
       <label>Date de livraison<input id="x-liv" type="date" value="${esc(e.livraison||'')}"></label>
-      <label>Poids / colis<input id="x-poids" value="${esc(e.poids||'')}" placeholder="Ex. 2 colis, 8,5 kg"></label>
       <label class="full">Note<input id="x-note" value="${esc(e.note||'')}" placeholder="Ex. dédouanement à Libreville"></label></fieldset>
+    <fieldset><legend>Colis</legend><div class="full colis-box">
+      <div class="colis-head"><span>N°</span><span>Poids (kg)</span><span>Longueur (cm)</span><span>Largeur (cm)</span><span>Hauteur (cm)</span><span></span></div>
+      <div id="colis-rows">${colisRows(e.colis&&e.colis.length?e.colis:[{}])}</div>
+      <div class="row-between"><button class="btn small" type="button" data-act="colis-add">+ Ajouter un colis</button><span class="colis-tot" id="colis-tot">${colisTotal(e.colis||[])}</span></div>
+      ${e.poids&&!(e.colis&&e.colis.length)?`<p class="hint" style="margin:0">Ancienne saisie : ${esc(e.poids)}</p>`:''}
+    </div></fieldset>
     ${dhlBlock(v)}
     <div class="track-box">${link?`<div><b>Suivre le colis</b><span class="sub">${esc(e.transporteur||'DHL')} · <span class="mono">${esc(e.suivi)}</span></span></div><a class="btn primary" href="${link}" target="_blank" rel="noopener">Ouvrir le suivi ${esc(e.transporteur||'DHL')} ↗</a>`
       :`<span class="muted">Saisissez le n° de suivi puis enregistrez : un bouton ouvrira directement le suivi du colis sur le site du transporteur.</span>`}</div>`;
@@ -1304,9 +1330,15 @@ document.addEventListener('click',e=>{
     case'k-wtoday':semRef=weekStart(new Date());render();break;
     case'k-soc':location.hash='parametres';break;
     case'vd-tab':venteDetail(id,b.dataset.k);break;
+    case'colis-add':{const l=readColis();const rows=[...document.querySelectorAll('#colis-rows .colis-row')].map(r=>({kg:r.querySelector('[data-cf=kg]').value,l:r.querySelector('[data-cf=l]').value,w:r.querySelector('[data-cf=w]').value,h:r.querySelector('[data-cf=h]').value}));
+      const last=rows[rows.length-1]||{};rows.push({l:last.l,w:last.w,h:last.h});$('#colis-rows').innerHTML=colisRows(rows);$('#colis-tot').innerHTML=colisTotal(readColis());$(`#c${rows.length-1}kg`).focus();break}
+    case'colis-rm':{const rows=[...document.querySelectorAll('#colis-rows .colis-row')].map(r=>({kg:r.querySelector('[data-cf=kg]').value,l:r.querySelector('[data-cf=l]').value,w:r.querySelector('[data-cf=w]').value,h:r.querySelector('[data-cf=h]').value}));
+      rows.splice(+b.dataset.ci,1);$('#colis-rows').innerHTML=colisRows(rows.length?rows:[{}]);$('#colis-tot').innerHTML=colisTotal(readColis());break}
     case'vd-dousave':{const v=S.ventes.find(x=>x.id===id);if(!v||!saveDouane(v))break;save();render();venteDetail(id,'douane');toast(justifStatut(v)==='complet'?'Justificatifs complets':'Informations douanières enregistrées');break}
     case'vd-expsave':{const v=S.ventes.find(x=>x.id===id);if(!v)break;
-      const e={transporteur:$('#x-tr').value,suivi:$('#x-suivi').value.trim().replace(/\s/g,''),date:$('#x-date').value,statut:$('#x-st').value,livraison:$('#x-liv').value,poids:$('#x-poids').value.trim(),note:$('#x-note').value.trim()};
+      const e={transporteur:$('#x-tr').value,suivi:$('#x-suivi').value.trim().replace(/\s/g,''),date:$('#x-date').value,statut:$('#x-st').value,livraison:$('#x-liv').value,colis:readColis(),note:$('#x-note').value.trim()};
+      if(!e.colis.length&&(v.expedition||{}).poids)e.poids=v.expedition.poids;
+      if(e.colis.some(c=>c.kg!=null&&c.kg<=0)){toast('Le poids d\'un colis doit être supérieur à zéro.');break}
       if(e.suivi&&e.statut==='preparer')e.statut='expedie';
       if(e.suivi&&!e.date)e.date=isoD(new Date());
       if(e.livraison&&e.statut!=='incident')e.statut='livre';
@@ -1347,6 +1379,7 @@ document.addEventListener('click',e=>{
       save();render();toast('Semaine clôturée');break}
   }
 });
+document.addEventListener('input',e=>{if(e.target.dataset&&e.target.dataset.cf){const t=$('#colis-tot');if(t)t.innerHTML=colisTotal(readColis())}});
 let pendingRestore=null;
 document.addEventListener('change',e=>{
   const t=e.target;
