@@ -32,7 +32,7 @@ Trois comptes sont créés au premier démarrage, avec les mêmes droits :
 | `INIT_PASSWORD` | Mot de passe provisoire de première connexion |
 | `DHL_API_KEY` | Clé de l'API DHL Shipment Tracking (facultatif) |
 | `DHL_HOURS` | Heures des vérifications DHL automatiques (`8,12,16,20` par défaut) |
-| `DHL_TZ` | Fuseau horaire de ces heures (`Africa/Libreville` par défaut) |
+| `DHL_TZ` | Fuseau horaire de ces heures (`Europe/Paris` par défaut) |
 
 ## Déploiement sur Render
 
