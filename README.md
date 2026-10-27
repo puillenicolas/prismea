@@ -31,7 +31,8 @@ Trois comptes sont créés au premier démarrage, avec les mêmes droits :
 | `SESSION_SECRET` | Secret des sessions (généré par Render) |
 | `INIT_PASSWORD` | Mot de passe provisoire de première connexion |
 | `DHL_API_KEY` | Clé de l'API DHL Shipment Tracking (facultatif) |
-| `DHL_INTERVAL_MIN` | Fréquence du suivi DHL automatique, en minutes (60 par défaut) |
+| `DHL_HOURS` | Heures des vérifications DHL automatiques (`8,12,16,20` par défaut) |
+| `DHL_TZ` | Fuseau horaire de ces heures (`Africa/Libreville` par défaut) |
 
 ## Déploiement sur Render
 

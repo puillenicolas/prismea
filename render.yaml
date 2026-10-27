@@ -21,8 +21,10 @@ services:
         sync: false
       - key: DHL_API_KEY
         sync: false
-      - key: DHL_INTERVAL_MIN
-        value: "60"
+      - key: DHL_HOURS
+        value: "8,12,16,20"
+      - key: DHL_TZ
+        value: Africa/Libreville
 
   # Version test : données fictives, pour essayer les fonctionnalités (branche « test »)
   - type: web
