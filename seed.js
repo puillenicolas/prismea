@@ -81,6 +81,10 @@ function buildState() {
       v.expedition = { transporteur: 'DHL', suivi: pad(Math.floor(1e9 + rnd() * 8e9), 10), date: isoD(addDays(date, 1)), statut: st,
         livraison: st === 'livre' ? isoD(addDays(date, 6)) : '', poids: `${1 + Math.floor(rnd() * 3)} colis`, note: '' };
     }
+    if (reg === 'export' && v.expedition && v.expedition.statut === 'livre') {
+      v.douane = { incoterm: 'DAP', declarant: 'DHL Express', mrn: '26FR' + String(1e12 + seqV * 7919).slice(-13) + '7', dateDecl: v.expedition.date,
+        bureau: 'FR003220 Roissy fret', dateSortie: isoD(addDays(new Date(v.expedition.date), 1)), note: '' };
+    }
     ventes.push(v);
     const p = rnd();
     if (d > 35 ? p < 0.9 : p < 0.45) {

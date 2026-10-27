@@ -973,7 +973,7 @@ function viewCaisse(){
 }
 function journalRows(){
   const[a,b]=periodBounds(),cf=per.client||'',sf=per.statut||'';
-  return S.ventes.filter(v=>{const d=new Date(v.date);return d>=a&&d<b&&(!cf||v.clientId===cf)&&(!sf||statutOf(v)===sf)}).sort((x,y)=>y.date.localeCompare(x.date));
+  return S.ventes.filter(v=>{const d=new Date(v.date);return d>=a&&d<b&&(!cf||v.clientId===cf)&&(!sf||(sf==='justif'?['partiel','manquant'].includes(justifStatut(v)):statutOf(v)===sf))}).sort((x,y)=>y.date.localeCompare(x.date));
 }
 function journalView(){
   const vs=journalRows();
@@ -984,15 +984,15 @@ function journalView(){
     <div class="pnav"><button class="icon-btn" data-act="k-prev" aria-label="Période précédente">‹</button><b>${periodLabel()}</b><button class="icon-btn" data-act="k-next" aria-label="Période suivante">›</button><button class="link" data-act="k-today">Aujourd'hui</button></div>
   </div>
   <div class="toolbar"><select id="j-client" aria-label="Client"><option value="">Tous les clients</option>${clients.map(c=>`<option value="${c.id}" ${per.client===c.id?'selected':''}>${esc(c.nom)}</option>`).join('')}</select>
-    <select id="j-statut" aria-label="Statut"><option value="">Tous les statuts</option>${Object.entries(STATUT).map(([k,[l]])=>`<option value="${k}" ${per.statut===k?'selected':''}>${l}</option>`).join('')}</select>
-    <button class="btn" data-act="k-csv" ${vs.length?'':'disabled'}>Exporter (CSV)</button></div>
+    <select id="j-statut" aria-label="Statut"><option value="">Tous les statuts</option>${Object.entries(STATUT).map(([k,[l]])=>`<option value="${k}" ${per.statut===k?'selected':''}>${l}</option>`).join('')}<option value="justif" ${per.statut==='justif'?'selected':''}>Justificatifs TVA incomplets</option></select>
+    <button class="btn" data-act="k-csv" ${vs.length?'':'disabled'}>Exporter (CSV)</button><button class="btn" data-act="k-dtva" ${vs.some(v=>regOf(v)!=='fr')?'':'disabled'} title="Liste des ventes exonérées avec leurs justificatifs, pour un contrôle fiscal">Dossier TVA (CSV)</button></div>
   <div class="kpis4"><div class="kpi"><span class="k">Ventes</span><span class="v">${vs.length}</span></div><div class="kpi"><span class="k">Total HT</span><span class="v">${money(T('ht'))}</span></div>
    <div class="kpi"><span class="k">TVA collectée</span><span class="v">${money(T('tva'))}</span></div><div class="kpi"><span class="k">Réglé / reste</span><span class="v">${money(paid)}</span><span class="d ${T('ttc')-paid>0.005?'down':''}">reste ${money(T('ttc')-paid)}</span></div></div>
-  <div class="table-wrap"><table><thead><tr><th>Facture</th><th>Date</th><th>Client</th><th class="num">HT</th><th class="num">TVA</th><th class="num">TTC</th><th class="num">Réglé</th><th>Statut</th><th>Expédition</th></tr></thead><tbody>
+  <div class="table-wrap"><table><thead><tr><th>Facture</th><th>Date</th><th>Client</th><th class="num">HT</th><th class="num">TVA</th><th class="num">TTC</th><th class="num">Réglé</th><th>Statut</th><th>Expédition</th><th>Justif. TVA</th></tr></thead><tbody>
   ${vs.length?vs.map(v=>`<tr class="row-link" data-vid="${v.id}" tabindex="0"><td class="mono">${v.facture}<span class="sub">${v.num}</span></td><td>${dF.format(new Date(v.date))}</td><td>${esc(cli(v.clientId)?.nom||'Client supprimé')}</td>
-    <td class="num">${money(v.ht)}</td><td class="num">${v.tva?money(v.tva):'—'}</td><td class="num"><b>${money(v.ttc)}</b></td><td class="num">${money(paidOf(v))}</td><td>${statutPill(v)}</td><td>${expPill(v)||'<span class="sub-cell">—</span>'}${(v.documents||[]).length?`<span class="sub">${v.documents.length} document${v.documents.length>1?'s':''}</span>`:''}</td></tr>`).join('')
-  :'<tr><td colspan="9"><div class="empty-state" style="padding:32px 12px"><p>Aucune vente sur cette période.</p></div></td></tr>'}
-  </tbody>${vs.length?`<tfoot><tr><td colspan="3"><b>Total</b></td><td class="num"><b>${money(T('ht'))}</b></td><td class="num"><b>${money(T('tva'))}</b></td><td class="num"><b>${money(T('ttc'))}</b></td><td class="num"><b>${money(paid)}</b></td><td></td><td></td></tr></tfoot>`:''}</table></div>`;
+    <td class="num">${money(v.ht)}</td><td class="num">${v.tva?money(v.tva):'—'}</td><td class="num"><b>${money(v.ttc)}</b></td><td class="num">${money(paidOf(v))}</td><td>${statutPill(v)}</td><td>${expPill(v)||'<span class="sub-cell">—</span>'}${(v.documents||[]).length?`<span class="sub">${v.documents.length} document${v.documents.length>1?'s':''}</span>`:''}</td><td>${justifPill(v)}</td></tr>`).join('')
+  :'<tr><td colspan="10"><div class="empty-state" style="padding:32px 12px"><p>Aucune vente sur cette période.</p></div></td></tr>'}
+  </tbody>${vs.length?`<tfoot><tr><td colspan="3"><b>Total</b></td><td class="num"><b>${money(T('ht'))}</b></td><td class="num"><b>${money(T('tva'))}</b></td><td class="num"><b>${money(T('ttc'))}</b></td><td class="num"><b>${money(paid)}</b></td><td></td><td></td><td></td></tr></tfoot>`:''}</table></div>`;
 }
 function impayesView(){
   const open=S.ventes.filter(v=>resteOf(v)>0.005).sort((a,b)=>a.echeance.localeCompare(b.echeance));
@@ -1059,7 +1059,7 @@ const TRANSPORTEURS={
 const EXP_STATUTS=[['preparer','À préparer','neutral'],['expedie','Expédié','acc'],['transit','En transit','acc'],['douane','En douane','warn'],['livre','Livré','ok'],['incident','Incident','bad']];
 const expOf=v=>v.expedition||{};
 const expPill=v=>{const e=expOf(v);if(!e.statut&&!e.suivi)return'';const s=EXP_STATUTS.find(x=>x[0]===(e.statut||'preparer'))||EXP_STATUTS[0];return`<span class="pill ${s[2]}">${s[1]}</span>`};
-const DOC_CATS=['Bordereau DHL','Facture fournisseur','Preuve de livraison','Photo','Autre'];
+const DOC_CATS=['Bordereau DHL','Déclaration d\'export (DAE)','Avis de sortie','Preuve de livraison','Attestation de réception','Facture commerciale','Facture fournisseur','Photo','Autre'];
 const fmtSize=b=>b>1048576?(b/1048576).toFixed(1).replace('.',',')+' Mo':Math.max(1,Math.round(b/1024))+' Ko';
 
 let vdLast='';
@@ -1082,6 +1082,7 @@ function venteDetail(id,tab){
     :`<p class="notice" style="margin:0">L'ajout de documents n'est possible que pour le propriétaire de Prismea, dans claude.ai.</p>`}
   ${docs.length?`<div class="docs">${[...docs].sort((a,b)=>b.date.localeCompare(a.date)).map(d=>`<div class="doc-row static"><span class="doc-file"><span class="doc-ico">${/pdf/.test(d.type)?'PDF':/image/.test(d.type)?'IMG':'TXT'}</span><span><a href="/api/files/${esc(d.id)}" target="_blank" rel="noopener"><b>${esc(d.nom)}</b></a><span class="sub">${esc(d.cat)} · ${fmtSize(d.taille)} · ajouté le ${dF.format(new Date(d.date))}</span></span></span>
     <span class="row-btns"><select data-doccat="${esc(d.id)}" data-vid="${v.id}" aria-label="Type de document" id="dc-${esc(d.id)}">${DOC_CATS.map(x=>`<option ${x===d.cat?'selected':''}>${x}</option>`).join('')}</select>${assetsNS?`<button class="link danger-link" data-act="vd-docdel" data-id="${v.id}" data-doc="${esc(d.id)}">Retirer</button>`:''}</span></div>`).join('')}</div>`:'<p class="muted">Aucun document pour cette vente.</p>'}`;
+  else if(vdTab==='douane')body=douaneTab(v);
   else{
     const link=e.suivi&&TRANSPORTEURS[e.transporteur||'DHL']?TRANSPORTEURS[e.transporteur||'DHL'](e.suivi):null;
     body=`<fieldset>
@@ -1097,8 +1098,9 @@ function venteDetail(id,tab){
       :`<span class="muted">Saisissez le n° de suivi puis enregistrez : un bouton ouvrira directement le suivi du colis sur le site du transporteur.</span>`}</div>`;
   }
   openModal('Facture '+v.facture,`${c?c.nom:''} · vente ${v.num} du ${dF.format(new Date(v.date))}`,
-  `<div class="tabs" role="tablist">${tb('facture','Facture')}${tb('reglements','Règlements',regs.length)}${tb('documents','Documents',docs.length)}${tb('expedition','Expédition')}${expPill(v)?'<span class="tab-pill">'+expPill(v)+'</span>':''}</div>${body}`,
-  vdTab==='expedition'?`<button class="btn" data-act="close">Fermer</button><button class="btn primary" data-act="vd-expsave" data-id="${v.id}">Enregistrer l'expédition</button>`
+  `<div class="tabs" role="tablist">${tb('facture','Facture')}${tb('reglements','Règlements',regs.length)}${tb('documents','Documents',docs.length)}${tb('expedition','Expédition')}${regOf(v)!=='fr'?`<button role="tab" aria-selected="${vdTab==='douane'}" data-act="vd-tab" data-k="douane" data-id="${v.id}">Douane et TVA ${justifStatut(v)==='complet'?'<span class="tab-n ok-n">✓</span>':`<span class="tab-n warn-n">${justifs(v).filter(x=>x.ok).length}/${justifs(v).length}</span>`}</button>`:''}${expPill(v)?'<span class="tab-pill">'+expPill(v)+'</span>':''}</div>${body}`,
+  vdTab==='douane'&&regOf(v)!=='fr'?`<button class="btn" data-act="close">Fermer</button><button class="btn primary" data-act="vd-dousave" data-id="${v.id}">Enregistrer</button>`
+  :vdTab==='expedition'?`<button class="btn" data-act="close">Fermer</button><button class="btn primary" data-act="vd-expsave" data-id="${v.id}">Enregistrer l'expédition</button>`
   :`<button class="btn" data-act="k-pdf" data-id="${v.id}" ${dlNS?'':'disabled title="Téléchargement indisponible dans cette vue"'}>Télécharger la facture (PDF)</button>${resteOf(v)>0.005?`<button class="btn primary" data-act="k-pay" data-id="${v.id}">Encaisser</button>`:'<button class="btn primary" data-act="close">Fermer</button>'}`);
   $('.modal-card').classList.add('wide');
   const f=$('#vd-file'),dz=$('#vd-drop');
@@ -1107,7 +1109,7 @@ function venteDetail(id,tab){
     ['dragleave','drop'].forEach(ev=>dz.addEventListener(ev,x=>{x.preventDefault();dz.classList.remove('over')}));
     dz.addEventListener('drop',x=>uploadDocs(v.id,[...x.dataTransfer.files]))}
 }
-async function uploadDocs(vid,files){
+async function uploadDocs(vid,files,forceCat,backTab){
   const v=S.ventes.find(x=>x.id===vid);if(!v||!files.length||!assetsNS)return;
   const msg=t=>{const m=$('#vd-msg');if(m)m.textContent=t};
   let ok=0;const errs=[];
@@ -1118,11 +1120,11 @@ async function uploadDocs(vid,files){
     try{
       const r=await assetsNS.upload(file,type?{type}:undefined);
       v.documents=v.documents||[];
-      v.documents.push({id:r.id,nom:file.name,type:r.contentType||type,taille:r.sizeBytes||file.size,date:new Date().toISOString(),cat:/dhl|awb|waybill|bordereau|lta/i.test(file.name)?'Bordereau DHL':/facture|invoice/i.test(file.name)?'Facture fournisseur':/image/.test(type)?'Photo':'Autre'});
+      v.documents.push({id:r.id,nom:file.name,type:r.contentType||type,taille:r.sizeBytes||file.size,date:new Date().toISOString(),cat:forceCat||(/dhl|awb|waybill|bordereau|lta/i.test(file.name)?'Bordereau DHL':/dae|ead|export|ecs|mrn|declaration/i.test(file.name)?'Déclaration d\'export (DAE)':/sortie|exit/i.test(file.name)?'Avis de sortie':/pod|livraison|delivery|reception|réception/i.test(file.name)?'Preuve de livraison':/facture|invoice/i.test(file.name)?'Facture commerciale':/image/.test(type)?'Photo':'Autre')});
       ok++;save();
     }catch(e){const c=e&&e.code;errs.push(`${file.name} : ${c==='too_large'?'fichier trop lourd (20 Mo maximum)':c==='unsupported_type'?'format non accepté (PDF, image ou texte uniquement)':c==='quota_or_state'?'espace de stockage plein':'envoi impossible pour le moment'}`)}
   }
-  venteDetail(vid,'documents');
+  venteDetail(vid,backTab||'documents');
   const m=$('#vd-msg');if(m){m.textContent=errs.length?errs.join(' · '):`${ok} document${ok>1?'s':''} ajouté${ok>1?'s':''}.`;m.classList.toggle('bad',!!errs.length)}
 }
 
@@ -1302,6 +1304,7 @@ document.addEventListener('click',e=>{
     case'k-wtoday':semRef=weekStart(new Date());render();break;
     case'k-soc':location.hash='parametres';break;
     case'vd-tab':venteDetail(id,b.dataset.k);break;
+    case'vd-dousave':{const v=S.ventes.find(x=>x.id===id);if(!v||!saveDouane(v))break;save();render();venteDetail(id,'douane');toast(justifStatut(v)==='complet'?'Justificatifs complets':'Informations douanières enregistrées');break}
     case'vd-expsave':{const v=S.ventes.find(x=>x.id===id);if(!v)break;
       const e={transporteur:$('#x-tr').value,suivi:$('#x-suivi').value.trim().replace(/\s/g,''),date:$('#x-date').value,statut:$('#x-st').value,livraison:$('#x-liv').value,poids:$('#x-poids').value.trim(),note:$('#x-note').value.trim()};
       if(e.suivi&&e.statut==='preparer')e.statut='expedie';
@@ -1329,6 +1332,7 @@ document.addEventListener('click',e=>{
     case'k-open':venteDetail(id);break;
     case'k-pay':payForm(id);break;
     case'k-pdf':downloadInvoice(id);break;
+    case'k-dtva':dossierTVA(journalRows(),`Dossier TVA - ${periodLabel()}.csv`);break;
     case'k-csv':journalCSV(journalRows(),`Journal des ventes - ${periodLabel()}.csv`);break;
     case'k-wcsv':weekCSV();break;
     case'k-regdel':{
@@ -1826,6 +1830,84 @@ async function readInvoiceFile(file){
   try{const lines=await pdfLines(file);const r=parseInvoice(lines);if(r.textLen<30)return{scan:true};return r}
   catch(e){return{erreur:true}}
 }
+
+/* ---------- Douane et justificatifs d'exonération de TVA ---------- */
+const INCOTERMS=['EXW','FCA','CPT','CIP','DAP','DPU','DDP','FAS','FOB','CFR','CIF'];
+const MRN_RE=/^\d{2}[A-Z]{2}[A-Z0-9]{13}\d$/;
+const docsCat=(v,cat)=>(v.documents||[]).filter(d=>d.cat===cat);
+/* Pièces attendues selon le régime de la vente */
+function justifs(v){
+  const reg=regOf(v),d=v.douane||{},e=expOf(v);
+  if(reg==='export')return[
+    {k:'mrn',t:'N° de déclaration d\'export (MRN)',ok:!!d.mrn,info:d.mrn},
+    {k:'sortie',t:'Sortie de l\'Union européenne confirmée',ok:!!d.dateSortie,info:d.dateSortie?'le '+dF.format(new Date(d.dateSortie)):''},
+    {k:'doc',cat:'Déclaration d\'export (DAE)',t:'Déclaration d\'export (DAE) en PDF',ok:docsCat(v,'Déclaration d\'export (DAE)').length>0},
+    {k:'doc',cat:'Avis de sortie',t:'Avis de sortie (« exit notice »)',ok:docsCat(v,'Avis de sortie').length>0},
+    {k:'doc',cat:'Bordereau DHL',t:'Lettre de transport (LTA / AWB)',ok:docsCat(v,'Bordereau DHL').length>0,info:e.suivi?'n° '+e.suivi:''},
+  ];
+  if(reg==='ue')return[
+    {k:'vies',t:'N° de TVA du client vérifié sur VIES',ok:!!d.viesDate,info:d.viesDate?(v.tvaIntra||'')+' · le '+dF.format(new Date(d.viesDate)):''},
+    {k:'doc',cat:'Bordereau DHL',t:'Lettre de transport (LTA / AWB)',ok:docsCat(v,'Bordereau DHL').length>0,info:e.suivi?'n° '+e.suivi:''},
+    {k:'doc',cat:'Preuve de livraison',t:'Preuve de livraison ou attestation de réception signée par le client',ok:docsCat(v,'Preuve de livraison').length+docsCat(v,'Attestation de réception').length>0},
+  ];
+  return[];
+}
+function justifStatut(v){
+  const j=justifs(v);if(!j.length)return null;
+  const n=j.filter(x=>x.ok).length;
+  return n===j.length?'complet':n?'partiel':'manquant';
+}
+function justifPill(v){
+  const s=justifStatut(v);if(!s)return'<span class="sub-cell">TVA facturée</span>';
+  const j=justifs(v),n=j.filter(x=>x.ok).length;
+  return s==='complet'?'<span class="pill ok">Justifiée</span>':`<span class="pill ${s==='partiel'?'warn':'bad'}">${n}/${j.length} pièces</span>`;
+}
+function douaneTab(v){
+  const reg=regOf(v),d=v.douane||{},c=cli(v.clientId)||{},p=paysByCode(c.pays);
+  if(reg==='fr')return`<p class="muted">Vente soumise à la TVA française (20 %) : aucun justificatif d'exonération n'est nécessaire.</p>`;
+  const j=justifs(v),n=j.filter(x=>x.ok).length;
+  const legal=reg==='export'?'Exonération de TVA, article 262 I du CGI (exportation hors de l\'Union européenne)':'Exonération de TVA, article 262 ter I du CGI (livraison intracommunautaire)';
+  const fields=reg==='export'?`
+    <label>Incoterm<select id="dz-inco"><option value="">—</option>${INCOTERMS.map(i=>`<option ${i===d.incoterm?'selected':''}>${i}</option>`).join('')}</select></label>
+    <label>Déclarant / commissionnaire<input id="dz-decl" value="${esc(d.declarant||(expOf(v).transporteur||''))}" placeholder="Ex. DHL Express"></label>
+    <label>N° MRN de la déclaration d'export<input id="dz-mrn" value="${esc(d.mrn||'')}" class="mono-in" spellcheck="false" placeholder="Ex. 26FR000123456789A1" maxlength="18"><span class="hint" id="dz-mrnhint">18 caractères, indiqué sur le DAE</span></label>
+    <label>Date de la déclaration<input id="dz-ddecl" type="date" value="${esc(d.dateDecl||'')}"></label>
+    <label>Bureau de douane de sortie<input id="dz-bureau" value="${esc(d.bureau||'')}" placeholder="Ex. FR003220 Roissy fret"></label>
+    <label>Date de sortie de l'UE<input id="dz-sortie" type="date" value="${esc(d.dateSortie||'')}"><span class="hint">Date de l'avis de sortie</span></label>`
+    :`
+    <label>Incoterm<select id="dz-inco"><option value="">—</option>${INCOTERMS.map(i=>`<option ${i===d.incoterm?'selected':''}>${i}</option>`).join('')}</select></label>
+    <label>N° de TVA du client<input value="${esc(v.tvaIntra||c.tvaIntra||'')}" class="mono-in" disabled></label>
+    <label>Vérifié sur VIES le<input id="dz-vies" type="date" value="${esc(d.viesDate||'')}"><span class="hint"><a href="https://ec.europa.eu/taxation_customs/vies/" target="_blank" rel="noopener">Vérifier sur le site VIES ↗</a></span></label>
+    <label>Date de réception par le client<input id="dz-recep" type="date" value="${esc(d.dateReception||'')}"></label>`;
+  return`<div class="lu-box">${legal}. Destination : <b>${esc(p?p[1]:'pays non renseigné')}</b>.</div>
+  <fieldset>${fields}<label class="full">Note<input id="dz-note" value="${esc(d.note||'')}" placeholder="Ex. dédouanement par DHL Express, DAE reçu par e-mail le…"></label></fieldset>
+  <div class="row-between"><h3 style="font-size:16px;margin:0">Pièces justificatives</h3><span class="${n===j.length?'pill ok':'pill warn'}">${n}/${j.length}</span></div>
+  <div class="checklist">${j.map(x=>`<div class="ck ${x.ok?'ok':''}"><span class="ck-ico" aria-hidden="true">${x.ok?'✓':''}</span><span><b>${x.t}</b>${x.info?`<span class="sub">${esc(x.info)}</span>`:''}${x.k==='doc'&&x.ok?`<span class="sub">${docsCat(v,x.cat).map(dd=>`<a href="/api/files/${esc(dd.id)}" target="_blank" rel="noopener">${esc(dd.nom)}</a>`).join(', ')}</span>`:''}</span>
+    ${x.k==='doc'&&assetsNS?`<label class="btn small" style="cursor:pointer">${x.ok?'Ajouter':'Joindre'}<input type="file" hidden accept=".pdf,image/*" data-dzcat="${esc(x.cat)}" data-vid="${v.id}"></label>`:''}</div>`).join('')}</div>
+  <p class="scan-msg" id="vd-msg" role="status"></p>`;
+}
+function saveDouane(v){
+  const g=id=>{const el=$('#'+id);return el?el.value.trim():undefined};
+  const d={...(v.douane||{})};
+  [['incoterm','dz-inco'],['declarant','dz-decl'],['dateDecl','dz-ddecl'],['bureau','dz-bureau'],['dateSortie','dz-sortie'],['viesDate','dz-vies'],['dateReception','dz-recep'],['note','dz-note']].forEach(([k,id])=>{const x=g(id);if(x!==undefined)d[k]=x});
+  const mrn=g('dz-mrn');
+  if(mrn!==undefined){const m=mrn.toUpperCase().replace(/\s/g,'');if(m&&!MRN_RE.test(m)){toast('Le n° MRN doit faire 18 caractères (ex. 26FR000123456789A1).');return false}d.mrn=m}
+  v.douane=d;return true;
+}
+function dossierTVA(vs,name){
+  const rows=[['Facture','Date','Client','Pays','N° TVA client','Régime','Mention','Total HT','Incoterm','MRN','Date déclaration','Bureau de sortie','Date de sortie','VIES vérifié le','Date de réception','LTA / AWB','Pièces jointes','Justificatif']];
+  vs.filter(v=>regOf(v)!=='fr').forEach(v=>{const c=cli(v.clientId)||{},d=v.douane||{},e=expOf(v);
+    rows.push([v.facture,dF.format(new Date(v.date)),c.nom||'',(paysByCode(c.pays)||[])[1]||'',v.tvaIntra||'',REGIME[regOf(v)],regOf(v)==='export'?'Art. 262 I CGI':'Art. 262 ter I CGI',csvNum(v.ht),
+      d.incoterm||'',d.mrn||'',d.dateDecl?dF.format(new Date(d.dateDecl)):'',d.bureau||'',d.dateSortie?dF.format(new Date(d.dateSortie)):'',d.viesDate?dF.format(new Date(d.viesDate)):'',d.dateReception?dF.format(new Date(d.dateReception)):'',
+      e.suivi||'',(v.documents||[]).map(x=>x.cat+' : '+x.nom).join(' | '),{complet:'Complet',partiel:'Incomplet',manquant:'Manquant'}[justifStatut(v)]])});
+  offerFile(name,csvOf(rows));
+}
+document.addEventListener('change',async e=>{
+  const t=e.target;if(!t.dataset||!t.dataset.dzcat||!t.files[0])return;
+  const vid=t.dataset.vid,cat=t.dataset.dzcat,file=t.files[0];t.value='';
+  const v=S.ventes.find(x=>x.id===vid);if(v&&saveDouane(v))save();
+  await uploadDocs(vid,[file],cat,'douane');
+});
 
 /* ---------- Routeur et événements ---------- */
 function render(){

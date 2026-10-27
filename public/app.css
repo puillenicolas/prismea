@@ -344,3 +344,13 @@ table.rank td{padding:9px 12px}
 .lu-box span{display:block;margin-top:2px;color:var(--ink)}
 .lu-box.warn{background:var(--warn-soft);color:var(--warn)}
 input.auto,select.auto{background:var(--accent-soft);border-color:var(--accent)}
+
+/* Douane et justificatifs TVA */
+.checklist{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.ck{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center;padding:11px 14px;border-bottom:1px solid var(--line);font-size:14px}
+.ck:last-child{border-bottom:0}
+.ck .sub{display:block;color:var(--muted);font-size:12.5px;overflow-wrap:anywhere}
+.ck-ico{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;border:2px solid var(--line);font-size:12px;font-weight:700;color:var(--ok)}
+.ck.ok .ck-ico{border-color:var(--ok);background:var(--ok-soft)}
+.tab-n.ok-n{background:var(--ok-soft);color:var(--ok)}
+.tab-n.warn-n{background:var(--warn-soft);color:var(--warn)}
