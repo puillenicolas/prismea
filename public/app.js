@@ -1096,7 +1096,7 @@ function venteDetail(id,tab){
   ${v.lignes.map(l=>`<tr><td><b>${esc(l.designation)}</b><span class="sub"><span class="mono">${esc(l.etiquette)}</span>${l.detail?' · '+esc(l.detail):''}</span></td><td class="num">${l.qte}</td><td class="num">${money(l.pu)}</td><td class="num">${money(l.qte*l.pu)}</td></tr>`).join('')}
   </tbody></table></div>
   <dl class="totals" style="max-width:320px;margin-left:auto">${v.rem?`<dt>Remise ${nf.format(v.remise)} %</dt><dd>−${money(v.rem)}</dd>`:''}${taxLines(v,regOf(v),v.tvaIntra)}</dl>`;
-  else if(vdTab==='reglements')body=`${regs.length?`<div class="docs">${regs.map(r=>`<div class="doc-row static"><span><b>${money(r.montant)}</b><span class="sub">${dF.format(new Date(r.date))} · ${esc(r.mode)}${regInfo(r)?' · '+esc(regInfo(r)):''}</span></span>${closedWeek(r.date)?'<span class="hint">Semaine clôturée</span>':`<button class="link danger-link" data-act="k-regdel" data-id="${r.id}">Supprimer</button>`}</div>`).join('')}</div>`:'<p class="muted">Aucun règlement pour cette facture.</p>'}
+  else if(vdTab==='reglements')body=`${regs.length?`<div class="docs">${regs.map(r=>`<div class="doc-row static"><span><b>${money(r.montant)}</b><span class="sub">${dF.format(new Date(r.date))} · ${esc(r.mode)}${regInfo(r)?' · '+esc(regInfo(r)):''}</span>${r.justifBanque?`<span class="sub" style="color:var(--ok)">Justifié à la banque le ${dF.format(new Date(r.justifBanque.le))}</span>`:''}</span><span class="row-btns">${/Virement/.test(r.mode)?`<button class="btn small" data-act="bk-open" data-id="${v.id}" data-rid="${r.id}">${r.justifBanque?'Renvoyer à la banque':'Justifier à la banque'}</button>`:''}${closedWeek(r.date)?'<span class="hint">Semaine clôturée</span>':`<button class="link danger-link" data-act="k-regdel" data-id="${r.id}">Supprimer</button>`}</span></div>`).join('')}</div>`:'<p class="muted">Aucun règlement pour cette facture.</p>'}
   <dl class="totals" style="max-width:320px;margin-left:auto"><dt>Total facturé</dt><dd>${money(v.ttc)}</dd><dt>Réglé</dt><dd>${money(paidOf(v))}</dd><dt class="big">Reste à payer</dt><dd class="big">${money(resteOf(v))}</dd></dl>`;
   else if(vdTab==='documents')body=attBlock(v)+`${assetsNS?`<label class="drop small" id="vd-drop" for="vd-file"><b>Ajouter des documents</b><span>Bordereau DHL, facture, photo… · PDF ou image, 20 Mo maximum</span>
     <input id="vd-file" type="file" multiple accept=".pdf,image/*,.txt,.csv" hidden data-vid="${v.id}"></label><p class="scan-msg" id="vd-msg" role="status"></p>`
@@ -1202,6 +1202,7 @@ function viewParametres(){
       <label class="full">IBAN<input id="s-iban" value="${v('iban')}" class="mono-in"></label>
       <label>BIC<input id="s-bic" value="${v('bic')}" class="mono-in"></label>
       <label>Banque<input id="s-banque" value="${v('banque')}"></label>
+      <label>E-mail du conseiller bancaire<input id="s-mailbq" type="email" value="${v('emailBanque')}" placeholder="Pour les justificatifs de virement"></label>
       <label>Délai de paiement<span class="suffix"><input id="s-delai" type="number" min="0" value="${s.delai??30}"><span>jours</span></span></label>
       <label>Transporteur par défaut<select id="s-transp">${Object.keys(TRANSPORTEURS).map(t=>`<option ${t===(s.transporteur||'DHL')?'selected':''}>${t}</option>`).join('')}</select></label>
     </fieldset></section>
@@ -1352,7 +1353,7 @@ document.addEventListener('click',e=>{
       (async()=>{try{if(assetsNS)await assetsNS.delete(did)}catch(e){}
         v.documents=(v.documents||[]).filter(d=>d.id!==did);save();render();venteDetail(id,'documents');toast('Document retiré')})();break}
     case'set-save':{
-      const m={nom:'s-nom',forme:'s-forme',capital:'s-capital',adresse:'s-adresse',cp:'s-cp',ville:'s-ville',tel:'s-tel',email:'s-email',siren:'s-siren',rcs:'s-rcs',tvaIntra:'s-tva',iban:'s-iban',bic:'s-bic',banque:'s-banque'};
+      const m={nom:'s-nom',forme:'s-forme',capital:'s-capital',adresse:'s-adresse',cp:'s-cp',ville:'s-ville',tel:'s-tel',email:'s-email',siren:'s-siren',rcs:'s-rcs',tvaIntra:'s-tva',iban:'s-iban',emailBanque:'s-mailbq',bic:'s-bic',banque:'s-banque'};
       Object.entries(m).forEach(([k,i])=>S.societe[k]=$('#'+i).value.trim());
       S.societe.delai=Math.max(0,Math.round(+$('#s-delai').value||0));S.societe.transporteur=$('#s-transp').value;
       if(!S.societe.nom||!S.societe.adresse||!S.societe.siren)toast('Paramètres enregistrés. Pensez à compléter la raison sociale, l\'adresse et le SIREN.');else toast('Paramètres enregistrés');
@@ -2038,6 +2039,118 @@ document.addEventListener('click',e=>{
   if(b.dataset.act==='att-send')attForm(v.id);
   if(b.dataset.act==='att-pdf'){if(!window.jspdf){toast('Le module PDF n\'a pas pu se charger.');return}offerFile(attFile(v),new Blob([attestationPDF(v)],{type:'application/pdf'}))}
 });
+
+/* ---------- Justificatif de virement pour la banque ---------- */
+const PDFLIB='https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js';
+let pdfLibReady=null;
+function loadPdfLib(){
+  if(window.PDFLib)return Promise.resolve(window.PDFLib);
+  if(!pdfLibReady)pdfLibReady=new Promise((ok,ko)=>{const s=document.createElement('script');s.src=PDFLIB;s.onload=()=>ok(window.PDFLib);s.onerror=()=>{pdfLibReady=null;ko(new Error('pdf-lib'))};document.head.appendChild(s)});
+  return pdfLibReady;
+}
+/* Pièces du dossier, dans l'ordre où la banque les lira */
+function bankPieces(v){
+  const pick=cats=>(v.documents||[]).filter(d=>cats.includes(d.cat));
+  return[
+    {k:'facture',t:'Facture '+v.facture,gen:true,ok:true},
+    {k:'awb',t:'Bordereau DHL (lettre de transport)',docs:pick(['Bordereau DHL'])},
+    {k:'dae',t:'Déclaration d\'export',docs:pick(['Déclaration d\'export (DAE)'])},
+    {k:'sortie',t:'Preuve de sortie de l\'Union européenne',docs:pick(['Avis de sortie'])},
+    {k:'recep',t:'Preuve de réception par le client',docs:pick(['Attestation de réception','Preuve de livraison'])},
+  ].map(p=>({...p,ok:p.gen||p.docs.length>0}));
+}
+function bankCover(v,r,pieces){
+  const {jsPDF}=window.jspdf;const pdf=new jsPDF({unit:'mm',format:'a4'});
+  const txt=s=>String(s??'').replace(/[  ]/g,' ').replace(/□/g,'/').replace(/[−–]/g,'-');
+  const s=S.societe,c=cli(v.clientId)||{},p=paysByCode(c.pays),e=expOf(v),d=v.douane||{};
+  const L=18,R=192;let y=22;
+  pdf.setFont('helvetica','bold');pdf.setFontSize(16);pdf.text('JUSTIFICATIF DE VIREMENT REÇU',L,y);
+  pdf.setFont('helvetica','normal');pdf.setFontSize(10);pdf.setTextColor(90);pdf.text(txt(`${s.nom||''}${s.siren?' · SIREN '+s.siren:''}${s.tvaIntra?' · TVA '+s.tvaIntra:''}`),L,y+6);pdf.setTextColor(0);
+  y+=18;
+  const sec=t=>{pdf.setFont('helvetica','bold');pdf.setFontSize(11);pdf.text(txt(t),L,y);pdf.setDrawColor(10,102,112);pdf.line(L,y+1.5,R,y+1.5);y+=7;pdf.setFont('helvetica','normal');pdf.setFontSize(9.5)};
+  const row=(k,val)=>{if(!val)return;pdf.setTextColor(100);pdf.text(txt(k),L,y);pdf.setTextColor(0);const w=pdf.splitTextToSize(txt(val),R-L-58);pdf.text(w,L+58,y);y+=Math.max(1,w.length)*4.8};
+  sec('Le virement');
+  row('Montant reçu',money(r.montant).replace(/[  ]/g,' '));
+  row('Date de réception',dF.format(new Date(r.date)));
+  row('Donneur d\'ordre',c.nom);row('Pays',p?p[1]:'');
+  row('Banque émettrice',r.banque);row('Référence du virement',r.ref);
+  y+=3;sec('L\'opération commerciale');
+  row('Nature','Vente de montures optiques (marchandises), code douanier SH 9003');
+  row('Facture',`${v.facture} du ${dF.format(new Date(v.date))}`);
+  row('Montant de la facture',`${money(v.ttc).replace(/[  ]/g,' ')} ${regOf(v)==='fr'?'TTC':'(hors taxes, '+(regOf(v)==='ue'?'livraison intracommunautaire':'exportation')+')'}`);
+  row('Quantité',`${v.lignes.reduce((t,l)=>t+l.qte,0)} montures`);
+  row('Client',[c.nom,c.ville,p?p[1]:''].filter(Boolean).join(', '));
+  if(c.nif||c.rccm||c.tvaIntra)row('Identifiants du client',[c.tvaIntra?'TVA '+c.tvaIntra:'',c.nif?'NIF '+c.nif:'',c.rccm?'RCCM '+c.rccm:''].filter(Boolean).join(' · '));
+  y+=3;sec('Le transport et la livraison');
+  row('Transporteur',e.transporteur||(e.suivi?'DHL':''));
+  row('Lettre de transport',e.suivi);
+  row('Date d\'expédition',e.date?dF.format(new Date(e.date)):'');
+  if(d.mrn)row('Déclaration d\'export (MRN)',d.mrn);
+  if(d.dateSortie)row('Sortie de l\'UE',dF.format(new Date(d.dateSortie)));
+  row('Livraison',e.livraison?dF.format(new Date(e.livraison)):d.dateReception?dF.format(new Date(d.dateReception)):'');
+  y+=3;sec('Pièces jointes à ce dossier');
+  pieces.forEach((pc,i)=>{pdf.text(txt(`${i+1}. ${pc.t}${pc.ok?'':' — non disponible'}`),L,y);y+=5});
+  y+=6;pdf.setFontSize(8.5);pdf.setTextColor(100);
+  pdf.text(pdf.splitTextToSize(txt(`Document établi le ${dF.format(new Date())} par ${s.nom||'la société'} pour justifier l'origine des fonds reçus. Contact : ${[s.email,s.tel].filter(Boolean).join(' · ')}`),R-L),L,y);
+  return pdf.output('arraybuffer');
+}
+async function bankDossier(v,r,keys){
+  const lib=await loadPdfLib();const out=await lib.PDFDocument.create();
+  const pieces=bankPieces(v).filter(p=>keys.includes(p.k));
+  const addPdf=async ab=>{try{const src=await lib.PDFDocument.load(ab,{ignoreEncryption:true});const pages=await out.copyPages(src,src.getPageIndices());pages.forEach(pg=>out.addPage(pg));return true}catch(e){return false}};
+  const addImg=async(ab,type)=>{const img=/png/.test(type)?await out.embedPng(ab):await out.embedJpg(ab);const A4=[595.28,841.89],m=36,sc=Math.min((A4[0]-2*m)/img.width,(A4[1]-2*m)/img.height,1);
+    const pg=out.addPage(A4);pg.drawImage(img,{x:(A4[0]-img.width*sc)/2,y:A4[1]-m-img.height*sc,width:img.width*sc,height:img.height*sc})};
+  await addPdf(bankCover(v,r,pieces));
+  const skipped=[];
+  for(const pc of pieces){
+    if(pc.gen){await addPdf(invoicePDF(v));continue}
+    for(const d of pc.docs){
+      try{const res=await fetch('/api/files/'+encodeURIComponent(d.id),{credentials:'same-origin'});if(!res.ok)throw 0;const ab=await res.arrayBuffer();
+        if(/pdf/.test(d.type)){if(!await addPdf(ab))skipped.push(d.nom)}else if(/png|jpe?g/.test(d.type))await addImg(ab,d.type);else skipped.push(d.nom)}
+      catch(e){skipped.push(d.nom)}
+    }
+  }
+  return{bytes:await out.save(),skipped};
+}
+const bankFile=v=>`Justificatif virement ${v.facture}.pdf`;
+function bankForm(vid,rid){
+  const v=S.ventes.find(x=>x.id===vid),r=S.reglements.find(x=>x.id===rid);if(!v||!r)return;
+  if(!window.jspdf){toast('Le module PDF n\'a pas pu se charger. Vérifiez la connexion internet.');return}
+  const c=cli(v.clientId)||{},p=paysByCode(c.pays),e=expOf(v),mail=window.__PRISMEA__.mail||{},pieces=bankPieces(v),sig=(window.__PRISMEA__.user||{}).nom||'';
+  const msg=`Bonjour,\n\nNous avons reçu le ${dF.format(new Date(r.date))} un virement de ${money(r.montant)} de la part de notre client ${c.nom||''}${p?' ('+p[1]+')':''}${r.banque?', émis par '+r.banque:''}${r.ref?', référence '+r.ref:''}.\n\nCe virement correspond au règlement de notre facture ${v.facture} du ${dF.format(new Date(v.date))}, pour la vente de ${v.lignes.reduce((t,l)=>t+l.qte,0)} montures optiques${e.suivi?', expédiées par '+(e.transporteur||'DHL')+' (lettre de transport n° '+e.suivi+')':''}.\n\nVous trouverez ci-joint le dossier justificatif réunissant :\n${pieces.filter(x=>x.ok).map(x=>'- '+x.t).join('\n')}\n\nNous restons à votre disposition pour tout complément.\n\nCordialement,\n${sig}\n${S.societe.nom||''}`.replace(/[  ]/g,' ');
+  openModal('Justifier le virement auprès de la banque',`${money(r.montant)} reçu le ${dF.format(new Date(r.date))} · facture ${v.facture}`,`
+  <fieldset>
+    <label class="full">E-mail de votre conseiller bancaire<input id="bk-to" type="email" value="${esc(S.societe.emailBanque||'')}" placeholder="conseiller@banque.fr"><span class="hint">${S.societe.emailBanque?'Repris des Paramètres':'Il sera enregistré dans les Paramètres pour la prochaine fois'}</span></label>
+    <label class="full">Objet<input id="bk-subj" value="${esc(`Justificatif du virement reçu de ${c.nom||'notre client'} – ${money(r.montant)}`.replace(/[  ]/g,' '))}"></label>
+  </fieldset>
+  <div><h3 style="font-size:15px;margin:0 0 8px">Pièces du dossier</h3><div class="checklist">${pieces.map(pc=>`<label class="ck ${pc.ok?'ok':''}"><input type="checkbox" data-bk="${pc.k}" ${pc.ok?'checked':'disabled'} style="width:auto;margin:0"><span><b>${pc.t}</b><span class="sub">${pc.gen?'Générée par Prismea':pc.ok?pc.docs.map(d=>esc(d.nom)).join(', '):'Non disponible : à ajouter dans les documents de la vente'}</span></span><span></span></label>`).join('')}</div></div>
+  <label>Message<textarea id="bk-msg" rows="12">${esc(msg)}</textarea></label>
+  <p class="hint" style="margin:0">Les pièces sont réunies en un seul PDF, précédé d'une page de synthèse : ${esc(bankFile(v))}.</p>
+  ${mail.configured?'':'<div class="lu-box warn">L\'envoi direct n\'est pas activé : le dossier PDF sera téléchargé et votre messagerie s\'ouvrira avec le message prêt. Il vous restera à joindre le PDF.</div>'}`,
+  `<button class="btn" data-act="k-open" data-id="${v.id}">Retour</button><button class="btn" id="bk-dl">Télécharger le dossier</button><button class="btn primary" id="bk-ok">${mail.configured?'Envoyer à la banque':'Télécharger et ouvrir ma messagerie'}</button>`,()=>{
+    $('.modal-card').classList.add('wide');
+    const keys=()=>[...document.querySelectorAll('[data-bk]:checked')].map(x=>x.dataset.bk);
+    const build=async btn=>{const old=btn.textContent;btn.disabled=true;btn.textContent='Préparation du dossier…';
+      try{const d=await bankDossier(v,r,keys());if(d.skipped.length)toast('Non intégré(s) au dossier : '+d.skipped.join(', '));return d}
+      catch(e){toast('Le dossier n\'a pas pu être préparé. Vérifiez la connexion internet.');return null}finally{btn.disabled=false;btn.textContent=old}};
+    $('#bk-dl').onclick=async()=>{const d=await build($('#bk-dl'));if(d)offerFile(bankFile(v),new Blob([d.bytes],{type:'application/pdf'}))};
+    $('#bk-ok').onclick=async()=>{
+      const to=$('#bk-to').value.trim(),subj=$('#bk-subj').value.trim(),text=$('#bk-msg').value;
+      if(!/^\S+@\S+\.\S+$/.test(to)){toast('Saisissez l\'e-mail de votre conseiller bancaire.');$('#bk-to').focus();return}
+      const btn=$('#bk-ok'),d=await build(btn);if(!d)return;
+      try{
+        if(mail.configured){btn.disabled=true;btn.textContent='Envoi…';
+          const res=await fetch('/api/mail',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({to,subject:subj,text,replyTo:S.societe.email||'',attachments:[{name:bankFile(v),content:abToB64(d.bytes)}]})});
+          if(!res.ok)throw 0}
+        else{await offerFile(bankFile(v),new Blob([d.bytes],{type:'application/pdf'}));const a=document.createElement('a');a.href=`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(text)}`;a.click()}
+        if(!S.societe.emailBanque)S.societe.emailBanque=to;
+        r.justifBanque={le:new Date().toISOString(),a:to,mode:mail.configured?'prismea':'messagerie'};
+        save();render();venteDetail(v.id,'reglements');toast(mail.configured?`Dossier envoyé à ${to}`:'Dossier téléchargé : joignez-le au message ouvert dans votre messagerie');
+      }catch(x){btn.disabled=false;btn.textContent=mail.configured?'Envoyer à la banque':'Télécharger et ouvrir ma messagerie';toast('L\'envoi a échoué. Réessayez ou téléchargez le dossier.')}
+    };
+  });
+}
+document.addEventListener('click',e=>{const b=e.target.closest('[data-act="bk-open"]');if(b)bankForm(b.dataset.id,b.dataset.rid)});
 
 /* ---------- Routeur et événements ---------- */
 function render(){
