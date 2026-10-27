@@ -3,7 +3,9 @@
 const { pool } = require('./db');
 
 const KEY = process.env.DHL_API_KEY || '';
-const INTERVAL_MIN = Math.max(15, +process.env.DHL_INTERVAL_MIN || 60);
+/* Passages à heures fixes (heure de Libreville par défaut) : 8 h, 12 h, 16 h et 20 h */
+const HOURS = String(process.env.DHL_HOURS || '8,12,16,20').split(',').map(h => +h.trim()).filter(h => h >= 0 && h < 24);
+const TZ = process.env.DHL_TZ || 'Africa/Libreville';
 const PAUSE_MS = 6000; // l'accès de départ autorise 1 appel toutes les 5 secondes
 const API = 'https://api-eu.dhl.com/track/shipments';
 
@@ -81,12 +83,21 @@ async function runOnce() {
   }
 }
 
-let timer = null;
+let lastSlot = '';
+const hourIn = tz => {
+  const parts = new Intl.DateTimeFormat('fr-FR', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false }).formatToParts(new Date());
+  const g = t => (parts.find(p => p.type === t) || {}).value;
+  return { day: `${g('year')}-${g('month')}-${g('day')}`, hour: +g('hour') % 24 };
+};
 function start() {
   if (!configured()) { console.log('Suivi DHL automatique désactivé (DHL_API_KEY absent).'); return; }
-  const loop = async () => { try { await runOnce(); } catch (e) { console.error('Suivi DHL', e.message); } timer = setTimeout(loop, INTERVAL_MIN * 60000); };
-  timer = setTimeout(loop, 20000);
-  console.log(`Suivi DHL automatique toutes les ${INTERVAL_MIN} minutes.`);
+  setInterval(async () => {
+    const { day, hour } = hourIn(TZ), slot = day + ' ' + hour;
+    if (!HOURS.includes(hour) || slot === lastSlot) return;
+    lastSlot = slot;
+    try { await runOnce(); } catch (e) { console.error('Suivi DHL', e.message); }
+  }, 60000);
+  console.log(`Suivi DHL automatique à ${HOURS.map(h => h + ' h').join(', ')} (${TZ}).`);
 }
 
 module.exports = { configured, refreshVente, start, mapStatut };
