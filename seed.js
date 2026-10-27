@@ -64,7 +64,7 @@ function buildState() {
     for (let k = 0; k < nl; k++) {
       const m = pick(montures); if (used.has(m.id)) continue; used.add(m.id);
       const q = 1 + Math.floor(rnd() * (m.pa < 20 ? 8 : 4));
-      lignes.push({ montureId: m.id, etiquette: m.etiquette, designation: m.marque + ' ' + m.modele, detail: `${m.coloris} · ${m.calibre}□${m.pont} ${m.branche}`, qte: q, pu: m.pv });
+      lignes.push({ montureId: m.id, etiquette: m.etiquette, designation: m.marque + ' ' + m.modele, detail: `${m.coloris} · ${m.calibre}□${m.pont} ${m.branche}`, qte: q, pu: m.pv, pa: m.pa });
       sold[m.id] = (sold[m.id] || 0) + q;
     }
     const date = new Date(day); date.setHours(9 + Math.floor(rnd() * 8), Math.floor(rnd() * 60), 0, 0);

@@ -313,3 +313,26 @@ body.auth .top-r,body.auth .gear{display:none}
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 .test-banner .link{color:var(--warn);text-decoration:underline;font-size:13px}
 body.env-test .brand b::after{content:" test";font-size:13px;font-weight:600;color:var(--warn);margin-left:2px}
+
+/* Statistique */
+.kpi .d.pos{color:var(--ok)}.kpi .d.neg{color:var(--danger)}.kpi .d.muted-d{color:var(--muted);font-weight:500}
+a.plain{color:inherit;text-decoration:none}a.plain:hover{color:var(--accent);text-decoration:underline}
+.kpi a.d{color:var(--accent)}
+.seg.small button{padding:5px 10px;font-size:12.5px}
+.chart-box{position:relative;overflow-x:auto;margin:10px 0 6px}
+.chart{width:100%;min-width:560px;height:auto;display:block}
+.chart .grid{stroke:var(--line);stroke-width:1}
+.chart .ax{fill:var(--muted);font:11px var(--f-body);font-variant-numeric:tabular-nums}
+.chart .ax-on{fill:var(--ink);font-weight:600}
+.chart .hit{fill:transparent}
+.chart .bar{fill:var(--accent);opacity:.32;transition:opacity .15s}
+.chart .bar-g.on .bar{opacity:1}
+.chart .bar-g.hover .bar{opacity:.85}
+.chart .bar-g.on.hover .bar{opacity:1;filter:brightness(1.1)}
+.chart-tip{position:absolute;pointer-events:none;background:var(--ink);color:var(--surface);font-size:12.5px;font-weight:600;padding:6px 9px;border-radius:7px;white-space:nowrap;box-shadow:var(--shadow);font-variant-numeric:tabular-nums}
+table.rank td{padding:9px 12px}
+.rank-l{display:flex;flex-direction:column;gap:5px;min-width:140px}
+.rank-l .sub{display:block;color:var(--muted);font-size:12px}
+.mini{display:block;height:4px;border-radius:2px;background:var(--surface-2);overflow:hidden}
+.mini i{display:block;height:100%;border-radius:2px;background:var(--accent)}
+.grid-2 .panel h3{margin-bottom:10px}

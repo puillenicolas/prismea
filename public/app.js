@@ -127,7 +127,7 @@ function viewHome(){
    ${tile('#clients',ICO.client,'Client',n?`<span class="tile-count">${n} client${n>1?'s':''}</span> enregistré${n>1?'s':''}.`:'Les opticiens et magasins qui achètent à la centrale.')}
    ${tile('#stock',ICO.stock,'Stock',(()=>{const q=S.montures.reduce((t,m)=>t+Math.max(0,m.qte),0);return q?`<span class="tile-count">${q} monture${q>1?'s':''}</span> en stock.`:'Les montures en stock et les entrées de marchandise.'})())}
    ${tile('#caisse',ICO.caisse,'Caisse',(()=>{const n=S.ventes.filter(v=>resteOf(v)>0.005).length;return n?`<span class="tile-count">${n} facture${n>1?'s':''}</span> à encaisser.`:'Journal des ventes, règlements, factures et caisse de la semaine.'})())}
-   ${tile('',ICO.stats,'Statistique','Le suivi de l\'activité de la centrale.')}
+   ${tile('#statistiques',ICO.stats,'Statistique',(()=>{const d=new Date(),a=new Date(d.getFullYear(),d.getMonth(),1),ca=S.ventes.filter(v=>new Date(v.date)>=a).reduce((t,v)=>t+v.ht,0);return ca?`<span class="tile-count">${money(ca)} HT</span> vendus ce mois-ci.`:'Chiffre d\'affaires, marges, meilleurs clients et marques.'})())}
   </section><p class="note" id="note" role="status"></p>`;
 }
 
@@ -357,7 +357,7 @@ async function validateDoc(){
   let nums;docBusy=true;
   try{nums=doc.kind==='vente'?[await alloc('V',S.seqV||0),await alloc('FA',S.seqFA||0)]:[await alloc('D',S.seqD||0)]}
   catch(x){toast('Connexion perdue : rien n\'a été enregistré, réessayez.');return}finally{docBusy=false}
-  const base={id:doc.kind[0]+Date.now().toString(36),kind:doc.kind,date:new Date().toISOString(),clientId:doc.clientId,lignes:doc.lignes.map(l=>({...l})),remise:+doc.remise||0,regime:doc.regime,tvaIntra:doc.regime==='ue'?doc.tvaIntra:'',...t};
+  const base={id:doc.kind[0]+Date.now().toString(36),kind:doc.kind,date:new Date().toISOString(),clientId:doc.clientId,lignes:doc.lignes.map(l=>({...l,pa:l.pa!=null?l.pa:((mon(l.montureId)||{}).pa||0)})),remise:+doc.remise||0,regime:doc.regime,tvaIntra:doc.regime==='ue'?doc.tvaIntra:'',...t};
   if(doc.kind==='vente'){
     S.seqV=Math.max(S.seqV||0,nums[0]);S.seqFA=Math.max(S.seqFA||0,nums[1]);const v={...base,num:'V'+y+'-'+pad4(nums[0]),facture:'FA'+y+'-'+pad4(nums[1]),paiement:doc.paiement};
     v.lignes.forEach(l=>{mon(l.montureId).qte-=l.qte});factureFor(v);v.regMig=true;S.ventes.push(v);
@@ -1353,6 +1353,157 @@ document.addEventListener('change',e=>{
   else if(t.id==='j-statut'){per.statut=t.value;render()}
 });
 
+/* ---------- Statistique ---------- */
+const st={mode:'mois',ref:new Date(),metric:'ca'};
+const MOIS_C=new Intl.DateTimeFormat('fr-FR',{month:'short'});
+const MOIS_L=new Intl.DateTimeFormat('fr-FR',{month:'long',year:'numeric'});
+const cap=s=>s.charAt(0).toUpperCase()+s.slice(1);
+function statBounds(){
+  const r=new Date(st.ref);
+  if(st.mode==='mois')return[new Date(r.getFullYear(),r.getMonth(),1),new Date(r.getFullYear(),r.getMonth()+1,1)];
+  if(st.mode==='trimestre'){const q=Math.floor(r.getMonth()/3)*3;return[new Date(r.getFullYear(),q,1),new Date(r.getFullYear(),q+3,1)]}
+  if(st.mode==='annee')return[new Date(r.getFullYear(),0,1),new Date(r.getFullYear()+1,0,1)];
+  const e=new Date(r.getFullYear(),r.getMonth()+1,1);return[new Date(e.getFullYear(),e.getMonth()-12,1),e];
+}
+const statLen=()=>st.mode==='mois'?1:st.mode==='trimestre'?3:12;
+function statPrev(){const[a]=statBounds();return[new Date(a.getFullYear(),a.getMonth()-statLen(),1),a]}
+function statLabel(){
+  const[a,b]=statBounds(),last=new Date(b.getFullYear(),b.getMonth()-1,1);
+  if(st.mode==='mois')return cap(MOIS_L.format(a));
+  if(st.mode==='trimestre')return`${Math.floor(a.getMonth()/3)+1}ᵉ trimestre ${a.getFullYear()}`;
+  if(st.mode==='annee')return String(a.getFullYear());
+  return`${cap(MOIS_L.format(a))} – ${MOIS_L.format(last)}`;
+}
+const inR=(d,[a,b])=>{const x=new Date(d);return x>=a&&x<b};
+const paOf=l=>l.pa!=null?l.pa:((mon(l.montureId)||{}).pa||0);
+/* Chiffres d'une liste de ventes : CA HT (remise déduite), marge brute, montures vendues */
+function aggr(vs){
+  let ca=0,marge=0,qte=0;
+  vs.forEach(v=>{const f=v.brut?v.ht/v.brut:1;ca+=v.ht;v.lignes.forEach(l=>{qte+=l.qte;marge+=l.qte*(l.pu*f-paOf(l))})});
+  return{ca:r2(ca),marge:r2(marge),qte,n:vs.length};
+}
+function delta(cur,prev){
+  if(!prev)return'<span class="d muted-d">Pas de comparaison</span>';
+  const p=Math.round((cur-prev)/Math.abs(prev)*100);
+  return`<span class="d ${p>=0?'pos':'neg'}">${p>=0?'▲ +':'▼ '}${p} % vs période précédente</span>`;
+}
+const niceStep=x=>{if(x<=0)return 1;const p=Math.pow(10,Math.floor(Math.log10(x))),n=x/p;return(n<=1?1:n<=2?2:n<=5?5:10)*p};
+const shortN=v=>v>=1e6?nf2.format(r2(v/1e6)).replace(/,00$/,'')+' M':v>=1e4?Math.round(v/1e3)+' k':nf.format(v);
+function monthSeries(){
+  const[,b]=statBounds(),months=[];
+  for(let i=12;i>=1;i--)months.push(new Date(b.getFullYear(),b.getMonth()-i,1));
+  return months.map(m=>{const e=new Date(m.getFullYear(),m.getMonth()+1,1);const a=aggr(S.ventes.filter(v=>inR(v.date,[m,e])));return{m,v:st.metric==='ca'?a.ca:st.metric==='marge'?a.marge:a.qte}});
+}
+function barChart(series,range){
+  const W=760,H=260,L=56,R=12,T=16,B=30,iw=W-L-R,ih=H-T-B;
+  const vals=series.map(s=>s.v),mx=Math.max(1,...vals),step=niceStep(mx/4),top=Math.ceil(mx/step)*step;
+  const fmtV=v=>st.metric==='qte'?nf.format(v)+' montures':money(v);
+  let g='';
+  for(let v=0;v<=top+1e-9;v+=step){const y=T+ih-ih*v/top;g+=`<line class="grid" x1="${L}" x2="${W-R}" y1="${y}" y2="${y}"/><text class="ax" x="${L-8}" y="${y+4}" text-anchor="end">${shortN(v)}</text>`}
+  const bw=iw/series.length,gap=Math.max(4,bw*.28);
+  series.forEach((s,i)=>{
+    const h=Math.max(0,ih*Math.max(0,s.v)/top),x=L+i*bw+gap/2,w=bw-gap,y=T+ih-h,on=inR(s.m,range),rr=Math.min(4,w/2,h);
+    const path=h>0?`M${x},${T+ih}V${y+rr}Q${x},${y} ${x+rr},${y}H${x+w-rr}Q${x+w},${y} ${x+w},${y+rr}V${T+ih}Z`:'';
+    const tip=`${cap(MOIS_L.format(s.m))} : ${fmtV(s.v)}`;
+    g+=`<g class="bar-g${on?' on':''}" data-tip="${esc(tip)}"><rect class="hit" x="${L+i*bw}" y="${T}" width="${bw}" height="${ih}"/>${path?`<path class="bar" d="${path}"/>`:''}</g>`;
+    g+=`<text class="ax${on?' ax-on':''}" x="${(x+w/2).toFixed(1)}" y="${H-10}" text-anchor="middle">${MOIS_C.format(s.m).replace('.','')}</text>`;
+  });
+  return`<div class="chart-box"><svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Évolution sur 12 mois">${g}</svg><div class="chart-tip" hidden></div></div>`;
+}
+function rankRows(rows,cols){
+  if(!rows.length)return'<p class="muted">Aucune donnée sur la période.</p>';
+  const mx=Math.max(...rows.map(r=>r.bar||0),1);
+  return`<div class="table-wrap"><table class="rank"><thead><tr>${cols.map(c=>`<th class="${c.num?'num':''}">${c.t}</th>`).join('')}</tr></thead><tbody>
+  ${rows.map(r=>`<tr>${cols.map((c,i)=>`<td class="${c.num?'num':''}">${i===0?`<div class="rank-l"><span>${r.cells[0]}</span><span class="mini"><i style="width:${(Math.max(0,r.bar||0)/mx*100).toFixed(1)}%"></i></span></div>`:r.cells[i]}</td>`).join('')}</tr>`).join('')}
+  </tbody></table></div>`;
+}
+function viewStats(){
+  const range=statBounds(),prev=statPrev();
+  const vs=S.ventes.filter(v=>inR(v.date,range)),vp=S.ventes.filter(v=>inR(v.date,prev));
+  const A=aggr(vs),P=aggr(vp);
+  const enc=S.reglements.filter(r=>inR(r.date,range)).reduce((t,r)=>t+r.montant,0);
+  const reste=S.ventes.reduce((t,v)=>t+resteOf(v),0);
+  const stockV=S.montures.reduce((t,m)=>t+Math.max(0,m.qte)*(m.pa||0),0);
+  const actifs=new Set(vs.map(v=>v.clientId)).size;
+  // clients
+  const byC={};vs.forEach(v=>{const o=byC[v.clientId]=byC[v.clientId]||{ca:0,n:0,qte:0};o.ca+=v.ht;o.n++;o.qte+=v.lignes.reduce((t,l)=>t+l.qte,0)});
+  const topC=Object.entries(byC).sort((a,b)=>b[1].ca-a[1].ca).slice(0,8).map(([id,o])=>{const c=cli(id);return{bar:o.ca,cells:[`<a class="plain" href="#client-${id}">${esc(c?c.nom:'Client supprimé')}</a>`,o.n,money(o.ca),A.ca?Math.round(o.ca/A.ca*100)+' %':'—']}});
+  // marques et modèles
+  const byB={},byM={};
+  vs.forEach(v=>{const f=v.brut?v.ht/v.brut:1;v.lignes.forEach(l=>{const m=mon(l.montureId),b=m?m.marque:(l.designation||'').split(' ')[0]||'Autre';
+    const ob=byB[b]=byB[b]||{ca:0,qte:0,marge:0};ob.ca+=l.qte*l.pu*f;ob.qte+=l.qte;ob.marge+=l.qte*(l.pu*f-paOf(l));
+    const om=byM[l.montureId]=byM[l.montureId]||{nom:l.designation,detail:l.detail,qte:0,ca:0};om.qte+=l.qte;om.ca+=l.qte*l.pu*f})});
+  const topB=Object.entries(byB).sort((a,b)=>b[1].ca-a[1].ca).slice(0,8).map(([b,o])=>({bar:o.ca,cells:[esc(b),nf.format(o.qte),money(o.ca),o.ca?Math.round(o.marge/o.ca*100)+' %':'—']}));
+  const topM=Object.values(byM).sort((a,b)=>b.qte-a.qte||b.ca-a.ca).slice(0,8).map(o=>({bar:o.qte,cells:[`${esc(o.nom)}<span class="sub">${esc(o.detail||'')}</span>`,nf.format(o.qte),money(o.ca)]}));
+  // géographie
+  const byP={},byR={export:0,ue:0,fr:0};
+  vs.forEach(v=>{const c=cli(v.clientId),p=c&&paysByCode(c.pays);const k=p?p[1]:'Non renseigné';byP[k]=(byP[k]||0)+v.ht;byR[regOf(v)]+=v.ht});
+  const topP=Object.entries(byP).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([p,ca])=>({bar:ca,cells:[esc(p),money(ca),A.ca?Math.round(ca/A.ca*100)+' %':'—']}));
+  // achats fournisseurs
+  const byF={};S.receptions.filter(r=>inR(r.date,range)).forEach(r=>{const o=byF[r.fournisseur]=byF[r.fournisseur]||{n:0,qte:0,total:0};o.n++;o.qte+=r.lignes.reduce((t,l)=>t+l.qte,0);o.total+=r.total});
+  const topF=Object.entries(byF).sort((a,b)=>b[1].total-a[1].total).map(([f,o])=>({bar:o.total,cells:[esc(f),o.n,nf.format(o.qte),money(o.total)]}));
+  // montures sans vente depuis 90 jours
+  const lim=addDays(new Date(),-90),last={};
+  S.ventes.forEach(v=>v.lignes.forEach(l=>{if(!last[l.montureId]||v.date>last[l.montureId])last[l.montureId]=v.date}));
+  const dorm=S.montures.filter(m=>m.qte>0&&(!last[m.id]||new Date(last[m.id])<lim)).sort((a,b)=>b.qte*(b.pa||0)-a.qte*(a.pa||0));
+  const dormV=dorm.reduce((t,m)=>t+m.qte*(m.pa||0),0);
+  const ruptures=S.montures.filter(m=>m.qte<=0).length,alertes=S.montures.filter(m=>m.qte>0&&m.qte<=m.seuil).length;
+  const seg=(k,l,cur,act)=>`<button data-act="${act}" data-k="${k}" aria-pressed="${cur===k}">${l}</button>`;
+  return`<a class="back" href="#">← Accueil</a>
+  <div class="head"><div><h1>Statistique</h1><p>L'activité commerciale de la centrale, en HT.</p></div>
+    <div class="seg" role="group" aria-label="Période">${seg('mois','Mois',st.mode,'st-mode')}${seg('trimestre','Trimestre',st.mode,'st-mode')}${seg('annee','Année',st.mode,'st-mode')}${seg('12m','12 derniers mois',st.mode,'st-mode')}</div></div>
+  <div class="period"><div class="pnav">${st.mode==='12m'?'':'<button class="icon-btn" data-act="st-prev" aria-label="Période précédente">‹</button>'}<b>${statLabel()}</b>${st.mode==='12m'?'':'<button class="icon-btn" data-act="st-next" aria-label="Période suivante">›</button><button class="link" data-act="st-today">Aujourd\'hui</button>'}</div></div>
+  <div class="kpis4">
+    <div class="kpi"><span class="k">Chiffre d'affaires HT</span><span class="v">${money(A.ca)}</span>${delta(A.ca,P.ca)}</div>
+    <div class="kpi"><span class="k">Marge brute</span><span class="v">${money(A.marge)}</span><span class="d muted-d">${A.ca?Math.round(A.marge/A.ca*100)+' % du CA':'—'}</span></div>
+    <div class="kpi"><span class="k">Montures vendues</span><span class="v">${nf.format(A.qte)}</span>${delta(A.qte,P.qte)}</div>
+    <div class="kpi"><span class="k">Panier moyen HT</span><span class="v">${money(A.n?A.ca/A.n:0)}</span><span class="d muted-d">${A.n} vente${A.n>1?'s':''} · ${actifs} client${actifs>1?'s':''}</span></div>
+  </div>
+  <div class="kpis4">
+    <div class="kpi"><span class="k">Encaissé sur la période</span><span class="v">${money(enc)}</span></div>
+    <div class="kpi"><span class="k">Reste à encaisser (total)</span><span class="v ${reste>0.005?'down':''}">${money(reste)}</span><a class="d plain" href="#caisse">Voir les impayés</a></div>
+    <div class="kpi"><span class="k">Valeur du stock</span><span class="v">${money(stockV)}</span><span class="d muted-d">au prix d'achat</span></div>
+    <div class="kpi"><span class="k">Stock dormant</span><span class="v">${money(dormV)}</span><span class="d muted-d">${dorm.length} réf. sans vente depuis 90 jours</span></div>
+  </div>
+  <section class="panel"><div class="row-between"><h3 style="margin:0">Sur 12 mois</h3>
+    <div class="seg small" role="group" aria-label="Indicateur">${seg('ca','CA HT',st.metric,'st-metric')}${seg('marge','Marge',st.metric,'st-metric')}${seg('qte','Montures',st.metric,'st-metric')}</div></div>
+    ${barChart(monthSeries(),range)}<p class="hint" style="margin:0">Les mois de la période choisie sont en couleur pleine.</p></section>
+  <div class="grid-2">
+    <section class="panel"><h3>Meilleurs clients</h3>${rankRows(topC,[{t:'Client'},{t:'Ventes',num:1},{t:'CA HT',num:1},{t:'Part',num:1}])}</section>
+    <section class="panel"><h3>Marques</h3>${rankRows(topB,[{t:'Marque'},{t:'Qté',num:1},{t:'CA HT',num:1},{t:'Marge',num:1}])}</section>
+    <section class="panel"><h3>Modèles les plus vendus</h3>${rankRows(topM,[{t:'Modèle'},{t:'Qté',num:1},{t:'CA HT',num:1}])}</section>
+    <section class="panel"><h3>Par pays</h3>${rankRows(topP,[{t:'Pays'},{t:'CA HT',num:1},{t:'Part',num:1}])}
+      ${A.ca?`<dl class="totals" style="margin-top:12px"><dt>Export hors UE</dt><dd>${money(byR.export)}</dd><dt>Union européenne</dt><dd>${money(byR.ue)}</dd><dt>France (TVA 20 %)</dt><dd>${money(byR.fr)}</dd></dl>`:''}</section>
+    <section class="panel"><h3>Achats par fournisseur</h3>${rankRows(topF,[{t:'Fournisseur'},{t:'Entrées',num:1},{t:'Montures',num:1},{t:'Montant HT',num:1}])}</section>
+    <section class="panel"><h3>Stock à surveiller</h3>
+      <div class="facts" style="border:0;padding:0;margin-bottom:12px"><div class="fact bad"><span>Ruptures</span><b>${ruptures}</b></div><div class="fact"><span>En alerte</span><b>${alertes}</b></div><div class="fact"><span>Sans vente depuis 90 jours</span><b>${dorm.length}</b></div></div>
+      ${dorm.length?rankRows(dorm.slice(0,6).map(m=>({bar:m.qte*(m.pa||0),cells:[`${esc(desig(m))}<span class="sub">${esc(m.coloris||'')} · ${esc(m.etiquette)}</span>`,m.qte,money(m.qte*(m.pa||0))]})),[{t:'Monture sans vente'},{t:'Stock',num:1},{t:'Valeur',num:1}]):'<p class="muted">Toutes les montures en stock se sont vendues récemment.</p>'}
+    </section>
+  </div>`;
+}
+document.addEventListener('click',e=>{
+  const b=e.target.closest('[data-act^="st-"]');if(!b)return;
+  const r=new Date(st.ref),n=statLen();
+  switch(b.dataset.act){
+    case'st-mode':st.mode=b.dataset.k;break;
+    case'st-metric':st.metric=b.dataset.k;break;
+    case'st-prev':st.ref=new Date(r.getFullYear(),r.getMonth()-n,1);break;
+    case'st-next':st.ref=new Date(r.getFullYear(),r.getMonth()+n,1);break;
+    case'st-today':st.ref=new Date();break;
+  }
+  render();
+});
+document.addEventListener('mousemove',e=>{
+  const box=e.target.closest&&e.target.closest('.chart-box');
+  if(!box){document.querySelectorAll('.chart-tip:not([hidden])').forEach(t=>t.hidden=true);document.querySelectorAll('.bar-g.hover').forEach(x=>x.classList.remove('hover'));return}
+  const tip=box.querySelector('.chart-tip'),g=e.target.closest('[data-tip]');
+  box.querySelectorAll('.bar-g.hover').forEach(x=>x!==g&&x.classList.remove('hover'));
+  if(!g){tip.hidden=true;return}
+  g.classList.add('hover');tip.textContent=g.dataset.tip;tip.hidden=false;
+  const rb=box.getBoundingClientRect();let x=e.clientX-rb.left+12;if(x+tip.offsetWidth>rb.width)x=e.clientX-rb.left-tip.offsetWidth-12;
+  tip.style.left=Math.max(0,x)+'px';tip.style.top=Math.max(0,e.clientY-rb.top-36)+'px';
+});
+
 /* ---------- Routeur et événements ---------- */
 function render(){
   const r=location.hash.slice(1);
@@ -1364,6 +1515,7 @@ function render(){
   else if(r==='catalogue'){$('#app').innerHTML=viewCatalogue();bindImport();if(imp)drawImport()}
   else if(r==='caisse')$('#app').innerHTML=viewCaisse();
   else if(r==='parametres')$('#app').innerHTML=viewParametres();
+  else if(r==='statistiques')$('#app').innerHTML=viewStats();
   else $('#app').innerHTML=viewHome();
 }
 window.addEventListener('hashchange',()=>{closeModal();render();window.scrollTo(0,0)});

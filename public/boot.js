@@ -145,7 +145,7 @@ async function start(user){
   const u=$('#user');u.hidden=false;
   u.querySelector('b').textContent=user.nom.split(' ')[0];
   $('#logout').onclick=async()=>{try{await flush()}catch(e){}await fetch('/api/logout',{method:'POST',credentials:'same-origin'});location.hash='';location.reload()};
-  const s=document.createElement('script');s.src='/app.js?v=2';
+  const s=document.createElement('script');s.src='/app.js?v=3';
   s.onload=()=>{flush().catch(()=>{});Sync.pollT=setTimeout(poll,12000)};
   document.body.appendChild(s);
 }
