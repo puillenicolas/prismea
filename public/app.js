@@ -127,7 +127,9 @@ function viewHome(){
    ${tile('#clients',ICO.client,'Client',n?`<span class="tile-count">${n} client${n>1?'s':''}</span> enregistré${n>1?'s':''}.`:'Les opticiens et magasins qui achètent à la centrale.')}
    ${tile('#stock',ICO.stock,'Stock',(()=>{const q=S.montures.reduce((t,m)=>t+Math.max(0,m.qte),0);return q?`<span class="tile-count">${q} monture${q>1?'s':''}</span> en stock.`:'Les montures en stock et les entrées de marchandise.'})())}
    ${tile('#caisse',ICO.caisse,'Caisse',(()=>{const n=S.ventes.filter(v=>resteOf(v)>0.005).length;return n?`<span class="tile-count">${n} facture${n>1?'s':''}</span> à encaisser.`:'Journal des ventes, règlements, factures et caisse de la semaine.'})())}
+   ${tile('#achats',ICO_ACHAT,'Achats',(()=>{const o=(S.facturesF||[]).filter(f=>resteF(f)>0.005),l=o.filter(f=>statutF(f)==='retard').length;return o.length?`<span class="tile-count">${o.length} facture${o.length>1?'s':''}</span> fournisseur à payer${l?` · <span class="warn-txt">${l} en retard</span>`:''}.`:'Factures fournisseurs, échéances et paiements.'})())}
    ${tile('#statistiques',ICO.stats,'Statistique',(()=>{const d=new Date(),a=new Date(d.getFullYear(),d.getMonth(),1),ca=S.ventes.filter(v=>new Date(v.date)>=a).reduce((t,v)=>t+v.ht,0);return ca?`<span class="tile-count">${money(ca)} HT</span> vendus ce mois-ci.`:'Chiffre d\'affaires, marges, meilleurs clients et marques.'})())}
+   ${tile('#parametres',ICO_SET,'Paramètres','Votre société, la facturation et les sauvegardes.')}
   </section><p class="note" id="note" role="status"></p>`;
 }
 
@@ -633,12 +635,12 @@ function fournisseursTab(){
   if(!S.fournisseurs.length)return`<div class="table-wrap"><div class="empty-state"><h3>Aucun fournisseur</h3><p>Ajoutez vos fournisseurs et les marques qu'ils distribuent. Vous les choisirez ensuite à chaque entrée de stock.</p><button class="btn primary" data-act="f-new">Nouveau fournisseur</button></div></div>`;
   const list=[...S.fournisseurs].sort((a,b)=>a.nom.localeCompare(b.nom,'fr'));
   return`<div class="row-between"><span></span><button class="btn" data-act="f-new">Nouveau fournisseur</button></div>
-  <div class="table-wrap"><table><thead><tr><th>Code</th><th>Fournisseur</th><th>Pays</th><th>Téléphone</th><th>Marques</th><th class="num">Entrées</th><th class="num">Achats HT</th></tr></thead><tbody>
+  <div class="table-wrap"><table><thead><tr><th>Code</th><th>Fournisseur</th><th>Pays</th><th>Téléphone</th><th>Marques</th><th class="num">Entrées</th><th class="num">Achats HT</th><th class="num">Reste à payer</th></tr></thead><tbody>
   ${list.map(f=>{const p=paysByCode(f.pays),rs=S.receptions.filter(r=>r.fournisseurId===f.id),bs=marquesOfFour(f.id);
     return`<tr class="row-link" data-fid="${f.id}" tabindex="0"><td class="code">${fcode(f)}</td><td><b>${esc(f.nom)}</b>${f.contact?`<span class="sub">${esc(f.contact)}</span>`:''}</td>
     <td>${p?`<span class="country"><span class="cc">${p[0]}</span>${esc(p[1])}</span>`:'—'}</td><td class="mono">${esc(fmtTel(f.pays,f.tel))||'—'}</td>
     <td>${bs.length?bs.map(b=>`<span class="chip-s">${esc(b.nom)}</span>`).join(' '):'<span class="sub-cell">Aucune</span>'}</td>
-    <td class="num">${rs.length}</td><td class="num">${money(rs.reduce((t,r)=>t+r.total,0))}</td></tr>`}).join('')}
+    <td class="num">${rs.length}</td><td class="num">${money(rs.reduce((t,r)=>t+r.total,0))}</td><td class="num">${(()=>{const d=(S.facturesF||[]).filter(x=>x.fournisseurId===f.id).reduce((t,x)=>t+resteF(x),0);return d>0.005?`<b>${money(d)}</b>`:'—'})()}</td></tr>`}).join('')}
   </tbody></table></div>`;
 }
 function marqueForm(b,presetFour){
@@ -1504,6 +1506,211 @@ document.addEventListener('mousemove',e=>{
   tip.style.left=Math.max(0,x)+'px';tip.style.top=Math.max(0,e.clientY-rb.top-36)+'px';
 });
 
+/* ---------- Achats : factures fournisseurs, paiements, échéances ---------- */
+S.facturesF=S.facturesF||[];
+const PAY_OUT=['Virement','Virement international (SWIFT)','Carte bancaire','Chèque','Espèces'];
+const delaiOf=f=>{const m=String((f&&f.conditions)||'').match(/(\d+)\s*j/i);return m?+m[1]:30};
+const paidF=f=>r2((f.paiements||[]).reduce((t,p)=>t+p.montant,0));
+const resteF=f=>Math.max(0,r2(f.ttc-paidF(f)));
+function statutF(f){
+  if(resteF(f)<=0.005)return'payee';
+  if(f.echeance&&isoD(new Date())>f.echeance)return'retard';
+  return paidF(f)>0?'partielle':'apayer';
+}
+const STATUT_F={apayer:['À payer','neutral'],partielle:['Partiellement payée','warn'],retard:['En retard','bad'],payee:['Payée','ok']};
+const statutFPill=f=>{const[l,c]=STATUT_F[statutF(f)];return`<span class="pill ${c}">${l}</span>`};
+const ffOf=id=>S.facturesF.find(x=>x.id===id);
+const joursAvant=d=>Math.round((new Date(d)-new Date(isoD(new Date())))/864e5);
+const ach={statut:'',four:'',q:''};
+const ICO_ACHAT='<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2.8h12v18.4l-3-1.8-3 1.8-3-1.8-3 1.8Z"/><path d="M9 7.5h6M9 11h6M9 14.5h3.5"/></svg>';
+const ICO_SET='<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-2.82 1.16V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 4.6 19.4l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 3 15.4H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 2.82 1.16l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 21 9h.09a2 2 0 1 1 0 4H21a1.65 1.65 0 0 0-1.6 2Z"/></svg>';
+
+function viewAchats(){
+  const all=S.facturesF;
+  const open=all.filter(f=>resteF(f)>0.005);
+  const tot=open.reduce((t,f)=>t+resteF(f),0),late=open.filter(f=>statutF(f)==='retard'),lateT=late.reduce((t,f)=>t+resteF(f),0);
+  const soon=open.filter(f=>statutF(f)!=='retard'&&f.echeance&&joursAvant(f.echeance)<=7),soonT=soon.reduce((t,f)=>t+resteF(f),0);
+  const mois=isoD(new Date()).slice(0,7),payeMois=all.reduce((t,f)=>t+(f.paiements||[]).filter(p=>p.date.slice(0,7)===mois).reduce((a,p)=>a+p.montant,0),0);
+  const q=ach.q.toLowerCase().trim();
+  const list=all.filter(f=>(!ach.statut||statutF(f)===ach.statut||(ach.statut==='ouvertes'&&resteF(f)>0.005))&&(!ach.four||f.fournisseurId===ach.four)
+    &&(!q||[f.ref,(fourOf(f.fournisseurId)||{}).nom,f.note].join(' ').toLowerCase().includes(q)))
+    .sort((a,b)=>{const ra=resteF(a)>0.005,rb=resteF(b)>0.005;if(ra!==rb)return ra?-1:1;return ra?(a.echeance||'').localeCompare(b.echeance||''):b.date.localeCompare(a.date)});
+  const fours=[...S.fournisseurs].sort((a,b)=>a.nom.localeCompare(b.nom,'fr'));
+  return`<a class="back" href="#">← Accueil</a>
+  <div class="head"><div><h1>Achats</h1><p>Les factures de vos fournisseurs, leurs échéances et leurs paiements.</p></div>
+    <button class="btn primary" data-act="ff-new">Nouvelle facture fournisseur</button></div>
+  <div class="kpis4">
+    <div class="kpi"><span class="k">Reste à payer</span><span class="v">${money(tot)}</span><span class="d muted-d">${open.length} facture${open.length>1?'s':''}</span></div>
+    <div class="kpi"><span class="k">En retard</span><span class="v ${lateT?'down':''}">${money(lateT)}</span><span class="d muted-d">${late.length} facture${late.length>1?'s':''}</span></div>
+    <div class="kpi"><span class="k">À payer sous 7 jours</span><span class="v">${money(soonT)}</span><span class="d muted-d">${soon.length} facture${soon.length>1?'s':''}</span></div>
+    <div class="kpi"><span class="k">Payé ce mois-ci</span><span class="v">${money(payeMois)}</span></div>
+  </div>
+  <label class="drop small" id="ff-drop" for="ff-file"><b>Déposer une facture fournisseur</b><span>Glissez le PDF ici ou choisissez-le : la fiche s'ouvre pour la compléter</span>
+    <input id="ff-file" type="file" accept=".pdf,image/*" hidden></label>
+  <div class="toolbar"><input id="ff-q" type="search" value="${esc(ach.q)}" placeholder="Rechercher un n° de facture ou un fournisseur" aria-label="Rechercher une facture">
+    <select id="ff-st" aria-label="Statut"><option value="">Toutes les factures</option><option value="ouvertes" ${ach.statut==='ouvertes'?'selected':''}>Non soldées</option>${Object.entries(STATUT_F).map(([k,[l]])=>`<option value="${k}" ${ach.statut===k?'selected':''}>${l}</option>`).join('')}</select>
+    <select id="ff-four" aria-label="Fournisseur"><option value="">Tous les fournisseurs</option>${fours.map(f=>`<option value="${f.id}" ${ach.four===f.id?'selected':''}>${esc(f.nom)}</option>`).join('')}</select></div>
+  <div class="table-wrap"><table><thead><tr><th>Fournisseur</th><th>N° facture</th><th>Date</th><th>Échéance</th><th class="num">Montant TTC</th><th class="num">Payé</th><th class="num">Reste</th><th>Statut</th></tr></thead><tbody>
+  ${list.length?list.map(f=>{const fo=fourOf(f.fournisseurId),j=f.echeance?joursAvant(f.echeance):null,st=statutF(f);return`<tr class="row-link" data-ffid="${f.id}" tabindex="0">
+    <td><b>${esc(fo?fo.nom:'Fournisseur supprimé')}</b>${(f.documents||[]).length?'<span class="sub">PDF joint</span>':''}</td><td class="mono">${esc(f.ref)}</td><td>${dF.format(new Date(f.date))}</td>
+    <td>${f.echeance?dF.format(new Date(f.echeance)):'—'}${st==='retard'?`<span class="sub warn-txt">${-j} jour${-j>1?'s':''} de retard</span>`:st!=='payee'&&j!=null&&j<=7?`<span class="sub">dans ${j} jour${j>1?'s':''}</span>`:''}</td>
+    <td class="num">${money(f.ttc)}</td><td class="num">${money(paidF(f))}</td><td class="num"><b>${resteF(f)>0.005?money(resteF(f)):'—'}</b></td><td>${statutFPill(f)}</td></tr>`}).join('')
+  :`<tr><td colspan="8"><div class="empty-state" style="padding:32px 12px"><p>${all.length?'Aucune facture ne correspond à ces filtres.':'Aucune facture fournisseur pour l\'instant. Déposez le PDF d\'une facture ou créez-la avec le bouton ci-dessus.'}</p></div></td></tr>`}
+  </tbody></table></div>`;
+}
+
+/* Fiche facture (création / modification) */
+function ffForm(f,pendingDoc){
+  const isNew=!f||!f.id;f={fournisseurId:ach.four||'',date:isoD(new Date()),receptions:[],documents:pendingDoc?[pendingDoc]:[],...(f||{})};
+  const st={docs:[...(f.documents||[])]};
+  const recOpts=fid=>{
+    const taken=new Set(S.facturesF.filter(x=>x.id!==f.id).flatMap(x=>x.receptions||[]));
+    const rs=S.receptions.filter(r=>r.fournisseurId===fid&&!taken.has(r.id)).sort((a,b)=>b.date.localeCompare(a.date));
+    return rs.length?rs.map(r=>`<label class="check"><input type="checkbox" data-ffrec="${r.id}" ${(f.receptions||[]).includes(r.id)?'checked':''}> ${r.num} du ${dF.format(new Date(r.date))}${r.doc?' · '+esc(r.doc):''} · <b>${money(r.total)}</b></label>`).join('')
+      :'<span class="hint">Aucune entrée de stock de ce fournisseur à rattacher.</span>';
+  };
+  const docsHtml=()=>st.docs.length?st.docs.map(d=>`<div class="doc-row static"><span class="doc-file"><span class="doc-ico">${/pdf/.test(d.type)?'PDF':'IMG'}</span><span><a href="/api/files/${esc(d.id)}" target="_blank" rel="noopener"><b>${esc(d.nom)}</b></a><span class="sub">${fmtSize(d.taille)}</span></span></span><button class="link danger-link" type="button" data-ffdocrm="${esc(d.id)}">Retirer</button></div>`).join(''):'<span class="hint">Aucun fichier joint.</span>';
+  openModal(isNew?'Nouvelle facture fournisseur':'Facture '+(f.ref||''),isNew?'':(fourOf(f.fournisseurId)||{}).nom||'',`
+  <fieldset>
+    <label class="full">Fournisseur <span class="req">*</span><select id="ff-f">${fourOptions(f.fournisseurId,true)}</select></label>
+    <label>N° de facture fournisseur <span class="req">*</span><input id="ff-ref" value="${esc(f.ref||'')}" class="mono-in" spellcheck="false"></label>
+    <label>Date de la facture <span class="req">*</span><input id="ff-date" type="date" value="${esc(f.date||'')}"></label>
+    <label>Échéance<input id="ff-ech" type="date" value="${esc(f.echeance||'')}"><span class="hint" id="ff-echhint"></span></label>
+  </fieldset>
+  <fieldset><legend>Entrées de stock concernées</legend><div class="full brand-checks" id="ff-recs">${recOpts(f.fournisseurId)}</div></fieldset>
+  <fieldset class="three"><legend>Montants</legend>
+    <label>Montant HT <span class="req">*</span><span class="suffix"><input id="ff-ht" type="number" min="0" step="0.01" value="${f.ht??''}"><span>€</span></span></label>
+    <label>TVA<span class="suffix"><input id="ff-tva" type="number" min="0" step="0.01" value="${f.tva??''}" placeholder="0"><span>€</span></span><span class="hint" id="ff-tvahint"></span></label>
+    <label>Total TTC<span class="suffix"><input id="ff-ttc" type="number" min="0" step="0.01" value="${f.ttc??''}" readonly><span>€</span></span></label>
+  </fieldset>
+  <fieldset><legend>Facture (PDF)</legend><div class="full" id="ff-docs">${docsHtml()}</div>
+    <label class="btn full" for="ff-up" style="justify-content:center;cursor:pointer">Joindre un fichier<input id="ff-up" type="file" accept=".pdf,image/*" hidden></label><p class="scan-msg full" id="ff-upmsg"></p></fieldset>
+  <fieldset><label class="full">Note<input id="ff-note" value="${esc(f.note||'')}" placeholder="Ex. facture en attente de l'avoir pour 2 montures cassées"></label></fieldset>`,
+  `${isNew?'':`<button class="btn danger" data-act="ff-del" data-id="${f.id}" style="margin-right:auto">Supprimer</button>`}<button class="btn" data-act="close">Annuler</button><button class="btn primary" id="ff-ok">${isNew?'Enregistrer la facture':'Enregistrer'}</button>`,()=>{
+    $('.modal-card').classList.add('wide');
+    const fo=()=>fourOf($('#ff-f').value);
+    const sync=src=>{
+      const four=fo(),ht=+$('#ff-ht').value||0;
+      if(src==='four'||src==='date'){if(four&&$('#ff-date').value&&(!f.echeance||src==='four'||src==='date')){$('#ff-ech').value=isoD(addDays($('#ff-date').value,delaiOf(four)))}}
+      if(src!=='tva'&&four&&(src==='four'||src==='ht'||src==='recs')){$('#ff-tva').value=four.pays==='FR'?r2(ht*0.2).toFixed(2):'0.00'}
+      $('#ff-echhint').textContent=four?`Délai du fournisseur : ${delaiOf(four)} jours${four.conditions?' ('+four.conditions+')':''}`:'';
+      $('#ff-tvahint').textContent=four?(four.pays==='FR'?'Fournisseur français : TVA 20 % récupérable':'Fournisseur hors de France : pas de TVA facturée en général'):'';
+      $('#ff-ttc').value=r2(ht+(+$('#ff-tva').value||0)).toFixed(2);
+    };
+    $('#ff-f').addEventListener('change',e=>{
+      if(e.target.value==='__new'){const keep={ref:$('#ff-ref').value,date:$('#ff-date').value,ht:$('#ff-ht').value,docs:st.docs};
+        fournisseurForm(null,nf=>{ffForm({...f,fournisseurId:nf.id,ref:keep.ref,date:keep.date,ht:keep.ht===''?undefined:+keep.ht,documents:keep.docs})});return}
+      f.receptions=[];$('#ff-recs').innerHTML=recOpts(e.target.value);sync('four');
+    });
+    $('#ff-date').addEventListener('change',()=>sync('date'));
+    $('#ff-ht').addEventListener('input',()=>sync('ht'));
+    $('#ff-tva').addEventListener('input',()=>sync('tva'));
+    $('#ff-recs').addEventListener('change',()=>{const ids=[...document.querySelectorAll('[data-ffrec]:checked')].map(x=>x.dataset.ffrec);
+      const sum=r2(S.receptions.filter(r=>ids.includes(r.id)).reduce((t,r)=>t+r.total,0));if(sum>0){$('#ff-ht').value=sum.toFixed(2)}sync('recs')});
+    $('#ff-docs').addEventListener('click',e=>{const b=e.target.closest('[data-ffdocrm]');if(!b)return;const id=b.dataset.ffdocrm;st.docs=st.docs.filter(d=>d.id!==id);
+      if(!(f.documents||[]).some(d=>d.id===id)&&assetsNS)assetsNS.delete(id).catch(()=>{});$('#ff-docs').innerHTML=docsHtml()});
+    $('#ff-up').addEventListener('change',async e=>{const file=e.target.files[0];e.target.value='';if(!file)return;
+      $('#ff-upmsg').textContent='Envoi du fichier…';try{st.docs.push(await uploadFF(file));$('#ff-docs').innerHTML=docsHtml();$('#ff-upmsg').textContent=''}catch(x){$('#ff-upmsg').textContent=x.message||'Le fichier n\'a pas pu être envoyé.'}});
+    if(isNew&&f.fournisseurId)sync('four');else sync('init');
+    (isNew?$('#ff-f'):$('#ff-ref')).focus();
+    $('#ff-ok').onclick=()=>{
+      const four=fo(),ref=$('#ff-ref').value.trim(),date=$('#ff-date').value,ht=r2(+$('#ff-ht').value||0),tva=r2(+$('#ff-tva').value||0);
+      if(!four){toast('Choisissez le fournisseur.');return}
+      if(!ref){toast('Indiquez le n° de la facture du fournisseur.');$('#ff-ref').focus();return}
+      if(!date){toast('Indiquez la date de la facture.');return}
+      if(ht<=0){toast('Indiquez le montant HT de la facture.');$('#ff-ht').focus();return}
+      if(S.facturesF.some(x=>x.id!==f.id&&x.fournisseurId===four.id&&x.ref.toLowerCase()===ref.toLowerCase())){toast('Cette facture de ce fournisseur est déjà enregistrée.');return}
+      const d={fournisseurId:four.id,ref,date,echeance:$('#ff-ech').value||isoD(addDays(date,delaiOf(four))),ht,tva,ttc:r2(ht+tva),
+        receptions:[...document.querySelectorAll('[data-ffrec]:checked')].map(x=>x.dataset.ffrec),documents:st.docs,note:$('#ff-note').value.trim()};
+      if(d.ttc<paidF(f)-0.005){toast('Le montant est inférieur à ce qui a déjà été payé.');return}
+      let rec;
+      if(isNew){rec={id:'ff'+Date.now().toString(36),cree:new Date().toISOString(),paiements:[],...d};S.facturesF.push(rec)}
+      else{rec=ffOf(f.id);Object.assign(rec,d)}
+      save();closeModal();render();toast(isNew?`Facture ${ref} enregistrée`:'Facture mise à jour');
+    };
+  });
+}
+async function uploadFF(file){
+  if(!assetsNS)throw new Error('Envoi de fichiers indisponible.');
+  const ext=(file.name.split('.').pop()||'').toLowerCase();
+  const type=file.type||({pdf:'application/pdf',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',webp:'image/webp'})[ext]||'';
+  try{const r=await assetsNS.upload(file,type?{type}:undefined);return{id:r.id,nom:file.name,type:r.contentType||type,taille:r.sizeBytes||file.size,date:new Date().toISOString()}}
+  catch(e){const c=e&&e.code;throw new Error(c==='too_large'?'Fichier trop lourd (20 Mo maximum).':c==='unsupported_type'?'Format non accepté : PDF ou image uniquement.':'Le fichier n\'a pas pu être envoyé.')}
+}
+
+/* Détail d'une facture fournisseur */
+function ffDetail(id){
+  const f=ffOf(id);if(!f)return;const fo=fourOf(f.fournisseurId),ps=[...(f.paiements||[])].sort((a,b)=>a.date.localeCompare(b.date));
+  const recs=S.receptions.filter(r=>(f.receptions||[]).includes(r.id));
+  openModal('Facture '+f.ref,`${fo?fo.nom:''} · du ${dF.format(new Date(f.date))}`,`
+  <div class="ticket-meta"><span>Échéance <b>${f.echeance?dF.format(new Date(f.echeance)):'—'}</b>${fo&&fo.conditions?' · '+esc(fo.conditions):''}</span>${statutFPill(f)}</div>
+  ${(f.documents||[]).length?`<div class="docs">${f.documents.map(d=>`<div class="doc-row static"><span class="doc-file"><span class="doc-ico">${/pdf/.test(d.type)?'PDF':'IMG'}</span><span><a href="/api/files/${esc(d.id)}" target="_blank" rel="noopener"><b>${esc(d.nom)}</b></a><span class="sub">${fmtSize(d.taille)}</span></span></span><a class="btn small" href="/api/files/${esc(d.id)}" target="_blank" rel="noopener">Ouvrir</a></div>`).join('')}</div>`:'<p class="hint" style="margin:0">Aucun PDF joint. Ajoutez-le avec « Modifier ».</p>'}
+  ${recs.length?`<p style="margin:0;font-size:14px">Entrées de stock : ${recs.map(r=>`<b class="mono">${r.num}</b> (${money(r.total)})`).join(', ')}</p>`:''}
+  ${f.note?`<p style="margin:0;font-size:14px;color:var(--muted)">${esc(f.note)}</p>`:''}
+  <dl class="totals" style="max-width:320px;margin-left:auto"><dt>Montant HT</dt><dd>${money(f.ht)}</dd><dt>TVA</dt><dd>${f.tva?money(f.tva):'—'}</dd><dt class="big">Total TTC</dt><dd class="big">${money(f.ttc)}</dd></dl>
+  <h3 style="font-size:16px">Paiements</h3>
+  ${ps.length?`<div class="docs">${ps.map(p=>`<div class="doc-row static"><span><b>${money(p.montant)}</b><span class="sub">${dF.format(new Date(p.date))} · ${esc(p.mode)}${[p.banque,p.ref].filter(Boolean).length?' · '+esc([p.banque,p.ref].filter(Boolean).join(' · ')):''}</span></span><button class="link danger-link" data-act="ff-paydel" data-id="${f.id}" data-pid="${p.id}">Supprimer</button></div>`).join('')}</div>`:'<p class="muted">Aucun paiement enregistré.</p>'}
+  <dl class="totals" style="max-width:320px;margin-left:auto"><dt>Payé</dt><dd>${money(paidF(f))}</dd><dt class="big">Reste à payer</dt><dd class="big">${money(resteF(f))}</dd></dl>`,
+  `<button class="btn" data-act="ff-edit" data-id="${f.id}">Modifier</button>${resteF(f)>0.005?`<button class="btn primary" data-act="ff-pay" data-id="${f.id}">Enregistrer un paiement</button>`:'<button class="btn primary" data-act="close">Fermer</button>'}`);
+  $('.modal-card').classList.add('wide');
+}
+function ffPayForm(id){
+  const f=ffOf(id);if(!f)return;const fo=fourOf(f.fournisseurId);
+  const lastBank=[...S.facturesF.flatMap(x=>x.paiements||[])].sort((a,b)=>b.date.localeCompare(a.date)).map(p=>p.banque).find(Boolean)||S.societe.banque||'';
+  openModal('Payer la facture '+f.ref,`${fo?fo.nom:''} · reste à payer ${money(resteF(f))}`,`
+  <fieldset>
+    <label>Date du paiement<input id="fp-date" type="date" value="${isoD(new Date())}"></label>
+    <label>Montant<span class="suffix"><input id="fp-mt" type="number" min="0" step="0.01" value="${resteF(f).toFixed(2)}"><span>€</span></span></label>
+    <label class="full">Mode de paiement<select id="fp-mode">${PAY_OUT.map(m=>`<option ${fo&&fo.pays!=='FR'&&m.startsWith('Virement international')?'selected':''}>${m}</option>`).join('')}</select></label>
+    <label>Banque débitée<input id="fp-banque" value="${esc(lastBank)}" placeholder="Votre banque"></label>
+    <label>Référence<input id="fp-ref" class="mono-in" placeholder="N° de virement, de chèque…"></label>
+  </fieldset>`,
+  `<button class="btn" data-act="ff-open" data-id="${f.id}">Retour</button><button class="btn primary" id="fp-ok">Enregistrer le paiement</button>`,()=>{
+    $('#fp-mt').focus();$('#fp-mt').select();
+    $('#fp-ok').onclick=()=>{
+      const d=$('#fp-date').value,mt=r2(+$('#fp-mt').value||0);
+      if(!d){toast('Indiquez la date du paiement.');return}
+      if(mt<=0){toast('Indiquez un montant supérieur à zéro.');return}
+      if(mt>resteF(f)+0.005){toast(`Le montant dépasse le reste à payer (${money(resteF(f))}).`);return}
+      f.paiements=f.paiements||[];
+      f.paiements.push({id:'p'+Date.now().toString(36),date:d,montant:mt,mode:$('#fp-mode').value,banque:$('#fp-banque').value.trim(),ref:$('#fp-ref').value.trim()});
+      save();render();ffDetail(f.id);toast(`Paiement de ${money(mt)} enregistré${resteF(f)<=0.005?' : facture soldée':''}`);
+    };
+  });
+}
+document.addEventListener('click',e=>{
+  const row=e.target.closest('tr.row-link[data-ffid]');
+  if(row&&!e.target.closest('[data-act]')){ffDetail(row.dataset.ffid);return}
+  const b=e.target.closest('[data-act^="ff-"]');if(!b)return;const id=b.dataset.id;
+  switch(b.dataset.act){
+    case'ff-new':ffForm();break;
+    case'ff-open':ffDetail(id);break;
+    case'ff-edit':ffForm(ffOf(id));break;
+    case'ff-pay':ffPayForm(id);break;
+    case'ff-paydel':{if(!b.dataset.sure){b.dataset.sure='1';b.textContent='Confirmer';break}
+      const f=ffOf(id);f.paiements=(f.paiements||[]).filter(p=>p.id!==b.dataset.pid);save();render();ffDetail(id);toast('Paiement supprimé');break}
+    case'ff-del':{if(!b.dataset.sure){b.dataset.sure='1';b.textContent='Confirmer la suppression';break}
+      const f=ffOf(id);if(assetsNS)(f.documents||[]).forEach(d=>assetsNS.delete(d.id).catch(()=>{}));
+      S.facturesF=S.facturesF.filter(x=>x.id!==id);save();closeModal();render();toast('Facture supprimée');break}
+  }
+});
+document.addEventListener('input',e=>{if(e.target.id==='ff-q'){ach.q=e.target.value;const pos=e.target.selectionStart;render();const i=$('#ff-q');if(i){i.focus();i.setSelectionRange(pos,pos)}}});
+document.addEventListener('change',async e=>{
+  const t=e.target;
+  if(t.id==='ff-st'){ach.statut=t.value;render()}
+  else if(t.id==='ff-four'){ach.four=t.value;render()}
+  else if(t.id==='ff-file'&&t.files[0]){const file=t.files[0];t.value='';await dropFF(file)}
+});
+async function dropFF(file){
+  toast('Envoi de la facture…');
+  try{const doc=await uploadFF(file);ffForm(null,doc);
+    const m=String(file.name).match(/(?:fact(?:ure)?|inv(?:oice)?|n°|no)[\s_\-]*([A-Z0-9][A-Z0-9\-\/]{2,})/i);if(m&&$('#ff-ref'))$('#ff-ref').value=m[1]}
+  catch(x){toast(x.message)}
+}
+document.addEventListener('dragover',e=>{const dz=e.target.closest&&e.target.closest('#ff-drop');if(dz){e.preventDefault();dz.classList.add('over')}});
+document.addEventListener('dragleave',e=>{const dz=e.target.closest&&e.target.closest('#ff-drop');if(dz)dz.classList.remove('over')});
+document.addEventListener('drop',e=>{const dz=e.target.closest&&e.target.closest('#ff-drop');if(!dz)return;e.preventDefault();dz.classList.remove('over');const f=e.dataTransfer.files[0];if(f)dropFF(f)});
+
 /* ---------- Routeur et événements ---------- */
 function render(){
   const r=location.hash.slice(1);
@@ -1516,6 +1723,7 @@ function render(){
   else if(r==='caisse')$('#app').innerHTML=viewCaisse();
   else if(r==='parametres')$('#app').innerHTML=viewParametres();
   else if(r==='statistiques')$('#app').innerHTML=viewStats();
+  else if(r==='achats')$('#app').innerHTML=viewAchats();
   else $('#app').innerHTML=viewHome();
 }
 window.addEventListener('hashchange',()=>{closeModal();render();window.scrollTo(0,0)});

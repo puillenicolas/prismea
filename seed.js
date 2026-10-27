@@ -110,11 +110,23 @@ function buildState() {
       lignes, total: r2(lignes.reduce((t, l) => t + l.qte * l.pa, 0)) });
   });
 
+  // Factures fournisseurs : une payée, une partiellement payée, une en retard, une à venir
+  const facturesF = receptions.map((r, i) => {
+    const f = fournisseurs.find(x => x.id === r.fournisseurId), date = addDays(new Date(r.date), 1);
+    const ht = r.total, tva = f.pays === 'FR' ? r2(ht * 0.2) : 0, ttc = r2(ht + tva), delai = i === 2 ? 30 : 45;
+    const paiements = i === 0 ? [{ id: 'p1', date: isoD(addDays(date, 40)), montant: ttc, mode: 'Virement international (SWIFT)', banque: 'BGFI Bank', ref: 'SWIFT-88412' }]
+      : i === 1 ? [{ id: 'p2', date: isoD(addDays(date, 30)), montant: r2(ttc / 2), mode: 'Virement', banque: 'BGFI Bank', ref: 'VIR-20456' }] : [];
+    return { id: 'ff' + (i + 1), fournisseurId: f.id, ref: ['OZ-INV-2026-118', 'LUM-F-4471', 'KB-2026-033'][i], date: isoD(date), echeance: isoD(addDays(date, delai)),
+      ht, tva, ttc, receptions: [r.id], documents: [], paiements, note: '', cree: iso(date) };
+  });
+  facturesF.push({ id: 'ff4', fournisseurId: 'f1', ref: 'OZ-INV-2026-131', date: isoD(addDays(now, -40)), echeance: isoD(addDays(now, 5)), ht: 1240, tva: 0, ttc: 1240,
+    receptions: [], documents: [], paiements: [], note: 'Réassort OZ 2040 et 2041', cree: iso(addDays(now, -40)) });
+
   const societe = { nom: 'Prismea Démo SAS', forme: 'SAS', capital: '10 000 €', adresse: '12 rue de la Démo', cp: '75002', ville: 'Paris', pays: 'FR',
     siren: '000000000', rcs: 'RCS Paris', tvaIntra: 'FR00000000000', tel: '01 23 45 67 89', email: 'demo@prismea.example', iban: 'FR76 0000 0000 0000 0000 0000 000', bic: 'DEMOFRPP', banque: 'Banque Démo', delai: 30, transporteur: 'DHL' };
 
   return {
-    clients, montures, ventes, devis, receptions, reglements, clotures: [], catalogue, marques, fournisseurs,
+    clients, montures, ventes, devis, receptions, reglements, clotures: [], catalogue, marques, fournisseurs, facturesF,
     meta: { devise: 'EUR', societe, seq: clients.length, seqV, seqFA, seqD, seqR, seqM: montures.length, seqF: fournisseurs.length },
   };
 }

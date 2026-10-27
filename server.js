@@ -23,7 +23,7 @@ const USERS = [
 ];
 
 /* Collections synchronisées (tableaux du state) ; le reste du state est en « meta » */
-const KINDS = ['clients', 'montures', 'ventes', 'devis', 'receptions', 'reglements', 'clotures', 'catalogue', 'marques', 'fournisseurs'];
+const KINDS = ['clients', 'montures', 'ventes', 'devis', 'receptions', 'reglements', 'clotures', 'catalogue', 'marques', 'fournisseurs', 'facturesF'];
 const SEQ_NAMES = { V: 'seqV', FA: 'seqFA', M: 'seqM', D: 'seqD', R: 'seqR', C: 'seq', F: 'seqF' };
 
 const app = express();
