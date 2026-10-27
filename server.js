@@ -8,10 +8,12 @@ const PgStore = require('connect-pg-simple')(session);
 const bcrypt = require('bcryptjs');
 const { pool, migrate } = require('./db');
 const dhl = require('./dhl');
+const { seed } = require('./seed');
 
 const PORT = process.env.PORT || 3000;
 const PROD = process.env.NODE_ENV === 'production';
 const INIT_PASSWORD = process.env.INIT_PASSWORD || '';
+const TEST = process.env.APP_ENV === 'test';
 
 /* Utilisateurs de départ : tous ont les mêmes droits */
 const USERS = [
@@ -84,7 +86,7 @@ app.post('/api/login', json, wrap(async (req, res) => {
   });
 }));
 app.post('/api/logout', (req, res) => req.session.destroy(() => res.json({ ok: true })));
-app.get('/api/me', (req, res) => res.json({ user: req.session.user || null, initConfigured: !!INIT_PASSWORD }));
+app.get('/api/me', (req, res) => res.json({ user: req.session.user || null, initConfigured: !!INIT_PASSWORD, env: TEST ? 'test' : 'production' }));
 app.post('/api/password', json, needAuth, wrap(async (req, res) => {
   const pw = String(req.body.password || '');
   if (pw.length < 8) return res.status(400).json({ error: 'trop_court' });
@@ -223,6 +225,13 @@ function recordId(kind, r) {
   return null;
 }
 
+/* Version test : remise à zéro avec les données fictives */
+app.post('/api/test/reset', needAuth, wrap(async (req, res) => {
+  if (!TEST) return res.status(404).json({ error: 'indisponible' });
+  await seed({ force: true });
+  res.json({ ok: true });
+}));
+
 /* ---------- Documents joints (bordereaux DHL, factures, photos) ---------- */
 const FILE_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'text/plain', 'text/csv'];
 app.post('/api/files', needAuth, express.raw({ type: () => true, limit: '20mb' }), wrap(async (req, res) => {
@@ -268,6 +277,7 @@ app.use((err, req, res, next) => {
   for (const [login, nom] of USERS) {
     await pool.query('insert into users(login,nom) values($1,$2) on conflict(login) do nothing', [login, nom]);
   }
+  if (TEST && await seed()) console.log('Version test : données fictives chargées.');
   if (!INIT_PASSWORD) console.warn('INIT_PASSWORD absent : les premières connexions seront impossibles tant qu\'il n\'est pas défini.');
   dhl.start();
   app.listen(PORT, () => console.log(`Prismea en ligne sur le port ${PORT}`));

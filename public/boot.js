@@ -141,12 +141,25 @@ async function start(user){
   const [st,dh]=await Promise.all([api('/api/state'),api('/api/dhl/status').catch(()=>({configured:false}))]);
   Sync.state=st.state;Sync.since=st.now;Sync.snap=current();
   window.__PRISMEA__={state:st.state,user,dhl:!!dh.configured};
+  const tr=$('#test-reset');if(tr)tr.hidden=false;
   const u=$('#user');u.hidden=false;
   u.querySelector('b').textContent=user.nom.split(' ')[0];
   $('#logout').onclick=async()=>{try{await flush()}catch(e){}await fetch('/api/logout',{method:'POST',credentials:'same-origin'});location.hash='';location.reload()};
-  const s=document.createElement('script');s.src='/app.js?v=1';
+  const s=document.createElement('script');s.src='/app.js?v=2';
   s.onload=()=>{flush().catch(()=>{});Sync.pollT=setTimeout(poll,12000)};
   document.body.appendChild(s);
 }
-api('/api/me',{noRedirect:true}).then(j=>start(j.user)).catch(()=>{authCard('<h1>Prismea est injoignable</h1><p class="muted">Vérifiez la connexion internet puis rechargez la page.</p>')});
+function testBanner(){
+  if(document.querySelector('.test-banner'))return;
+  const b=document.createElement('div');b.className='test-banner';
+  b.innerHTML='<div class="test-in"><span><b>Version test</b> · données fictives, à utiliser librement pour essayer. Rien n\'est lié à la vraie Prismea.</span><button class="link" id="test-reset" type="button" hidden>Remettre les données de test à zéro</button></div>';
+  document.querySelector('.top').after(b);
+  const btn=b.querySelector('#test-reset');
+  btn.onclick=async()=>{
+    if(!btn.dataset.sure){btn.dataset.sure='1';btn.textContent='Confirmer la remise à zéro (toutes les données de test seront remplacées)';return}
+    btn.disabled=true;btn.textContent='Remise à zéro…';
+    try{await api('/api/test/reset',{method:'POST',body:{}});Sync.snap=new Map();location.hash='';location.reload()}catch(e){btn.disabled=false;btn.textContent='La remise à zéro a échoué, réessayer'}
+  };
+}
+api('/api/me',{noRedirect:true}).then(j=>{if(j.env==='test'){document.body.classList.add('env-test');testBanner()}start(j.user)}).catch(()=>{authCard('<h1>Prismea est injoignable</h1><p class="muted">Vérifiez la connexion internet puis rechargez la page.</p>')});
 })();

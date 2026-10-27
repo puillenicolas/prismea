@@ -306,3 +306,10 @@ body.auth .top-r,body.auth .gear{display:none}
 .dhl-events li span{color:var(--muted);font-variant-numeric:tabular-nums}
 .dhl-events li em{grid-column:2;color:var(--muted);font-style:normal;font-size:12.5px}
 @media (max-width:640px){.sync span,.date{display:none}.user{padding-left:8px}}
+
+/* Version test */
+.test-banner{background:var(--warn-soft);color:var(--warn);border-bottom:1px solid var(--line);font-size:13.5px}
+.test-in{max-width:1100px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding-block:7px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.test-banner .link{color:var(--warn);text-decoration:underline;font-size:13px}
+body.env-test .brand b::after{content:" test";font-size:13px;font-weight:600;color:var(--warn);margin-left:2px}

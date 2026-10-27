@@ -40,6 +40,10 @@ Trois comptes sont créés au premier démarrage, avec les mêmes droits :
 3. Renseigner `INIT_PASSWORD` (et `DHL_API_KEY` quand la clé DHL est obtenue), puis valider.
 4. Ouvrir l'adresse `https://prismea.onrender.com` (ou celle indiquée par Render).
 
+## Version test
+
+Le service `prismea-test` (branche `test`, base `prismea-test-db`) sert à essayer de nouvelles fonctionnalités sans toucher aux vraies données. Avec `APP_ENV=test`, il charge des données fictives au premier démarrage, affiche un bandeau « Version test » et propose de remettre les données à zéro. Les nouveautés sont d'abord poussées sur `test`, puis sur `main` une fois validées.
+
 ## Reprendre les données de la première version
 
 Dans l'ancienne version : **Paramètres → Télécharger une sauvegarde**. Dans la version en ligne : **Paramètres → Restaurer une sauvegarde**. Les documents joints dans l'ancienne version ne sont pas repris : il faut les rajouter.

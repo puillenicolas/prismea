@@ -24,9 +24,39 @@ services:
       - key: DHL_INTERVAL_MIN
         value: "60"
 
+  # Version test : données fictives, pour essayer les fonctionnalités (branche « test »)
+  - type: web
+    name: prismea-test
+    runtime: node
+    plan: free
+    region: frankfurt
+    branch: test
+    buildCommand: npm ci
+    startCommand: node server.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_ENV
+        value: test
+      - key: DATABASE_URL
+        fromDatabase:
+          name: prismea-test-db
+          property: connectionString
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: INIT_PASSWORD
+        sync: false
+
 databases:
   - name: prismea-db
     plan: basic-256mb
     region: frankfurt
     databaseName: prismea
+    user: prismea
+
+  - name: prismea-test-db
+    plan: free
+    region: frankfurt
+    databaseName: prismea_test
     user: prismea
