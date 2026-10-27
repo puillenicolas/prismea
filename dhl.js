@@ -3,9 +3,9 @@
 const { pool } = require('./db');
 
 const KEY = process.env.DHL_API_KEY || '';
-/* Passages à heures fixes (heure de Libreville par défaut) : 8 h, 12 h, 16 h et 20 h */
+/* Passages à heures fixes (heure de Paris par défaut) : 8 h, 12 h, 16 h et 20 h */
 const HOURS = String(process.env.DHL_HOURS || '8,12,16,20').split(',').map(h => +h.trim()).filter(h => h >= 0 && h < 24);
-const TZ = process.env.DHL_TZ || 'Africa/Libreville';
+const TZ = process.env.DHL_TZ || 'Europe/Paris';
 const PAUSE_MS = 6000; // l'accès de départ autorise 1 appel toutes les 5 secondes
 const API = 'https://api-eu.dhl.com/track/shipments';
 

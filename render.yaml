@@ -24,7 +24,7 @@ services:
       - key: DHL_HOURS
         value: "8,12,16,20"
       - key: DHL_TZ
-        value: Africa/Libreville
+        value: Europe/Paris
 
   # Version test : données fictives, pour essayer les fonctionnalités (branche « test »)
   - type: web
