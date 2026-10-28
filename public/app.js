@@ -81,21 +81,26 @@ function regimeOf(c){
 }
 const regOf=d=>d.regime||(d.tvaFR?'fr':'export');
 const REGIME={fr:'TVA française 20\u202F% appliquée',ue:'Livraison intracommunautaire hors taxes',export:'Vente hors taxes (exportation)'};
-/* Remise par ligne : en % (l.rem) ; le prix net unitaire est arrondi au centime */
-const remL=l=>Math.min(100,Math.max(0,+l.rem||0));
-const puNet=l=>r2(l.pu*(1-remL(l)/100));
+/* Remise par ligne : en % ou en € par monture (l.remT = '€'), l.rem = valeur ; prix net unitaire au centime */
+const isE=x=>x==='€';
+const remL=l=>isE(l.remT)?Math.min(+l.pu||0,Math.max(0,+l.rem||0)):Math.min(100,Math.max(0,+l.rem||0));
+const puNet=l=>r2(isE(l.remT)?l.pu-remL(l):l.pu*(1-remL(l)/100));
 const lineHT=l=>r2(l.qte*puNet(l));
-function totals(lignes,remise,regime){
+const fmtPct=n=>nf2.format(n).replace(/,00$/,'');
+const remTag=l=>isE(l.remT)?`−${money(remL(l))}`:`−${fmtPct(remL(l))} %`;
+/* Remise client globale : en % (défaut) ou en montant € (remiseT = '€') */
+function totals(lignes,remise,regime,remiseT){
   const tvaFR=regime===true||regime==='fr';
   const brut=r2(lignes.reduce((t,l)=>t+l.qte*l.pu,0)),net=r2(lignes.reduce((t,l)=>t+lineHT(l),0)),remLignes=r2(brut-net);
-  const rem=r2(net*(+remise||0)/100),ht=r2(net-rem);
+  const rem=r2(isE(remiseT)?Math.min(net,Math.max(0,+remise||0)):net*Math.min(100,Math.max(0,+remise||0))/100),ht=r2(net-rem);
   const tva=r2(tvaFR?ht*TVA_FR/100:0);
   return{brut,remLignes,net,rem,ht,tva,ttc:r2(ht+tva)};
 }
+const remCliLabel=d=>isE(d.remiseT)?'Remise client':`Remise client ${nf.format(d.remise)} %`;
 /* Lignes de remise du récapitulatif (remises sur montures puis remise client globale) */
-const remTotals=(d,brut=true)=>(brut&&(d.remLignes||d.rem)&&d.brut?`<dt>Total brut HT</dt><dd>${money(d.brut)}</dd>`:'')+(d.remLignes?`<dt>Remises sur montures</dt><dd>−${money(d.remLignes)}</dd>`:'')+(d.rem?`<dt>Remise client ${nf.format(d.remise)} %</dt><dd>−${money(d.rem)}</dd>`:'');
+const remTotals=(d,brut=true)=>(brut&&(d.remLignes||d.rem)&&d.brut?`<dt>Total brut HT</dt><dd>${money(d.brut)}</dd>`:'')+(d.remLignes?`<dt>Remises sur montures</dt><dd>−${money(d.remLignes)}</dd>`:'')+(d.rem?`<dt>${remCliLabel(d)}</dt><dd>−${money(d.rem)}</dd>`:'');
 /* Cellule « PU HT » avec le prix barré quand la ligne est remisée */
-const puCell=l=>remL(l)?`<s class="muted">${money(l.pu)}</s><br><b>${money(puNet(l))}</b> <span class="rem-tag">−${nf2.format(remL(l)).replace(/,00$/,'')} %</span>`:money(l.pu);
+const puCell=l=>remL(l)?`<s class="muted">${money(l.pu)}</s><br><b>${money(puNet(l))}</b> <span class="rem-tag">${remTag(l)}</span>`:money(l.pu);
 function taxLines(t,reg,intra){
   if(reg==='fr')return`<dt>Total HT</dt><dd>${money(t.ht)}</dd><dt>TVA ${TVA_FR}\u202F%</dt><dd>${money(t.tva)}</dd><dt class="big">Total TTC</dt><dd class="big">${money(t.ttc)}</dd>`;
   const legal=reg==='ue'?`Exonération de TVA, article 262 ter I du CGI (livraison intracommunautaire). Autoliquidation par le client${intra?', n° TVA '+esc(intra):''}.`:'Exonération de TVA, article 262 I du CGI (exportation).';
@@ -322,21 +327,21 @@ function drawDoc(){
     <td><b>${esc(l.designation)}</b><span class="sub"><span class="mono">${esc(m?m.etiquette:l.etiquette)}</span> · ${esc(l.detail)}${over?` · <span class="warn-txt">${m.qte} en stock</span>`:''}</span></td>
     <td><div class="qty"><button data-act="dq-" data-id="${l.montureId}" aria-label="Diminuer">−</button><input id="dq-${l.montureId}" type="number" min="1" data-dq="${l.montureId}" value="${l.qte}" aria-label="Quantité"><button data-act="dq+" data-id="${l.montureId}" aria-label="Augmenter">+</button></div></td>
     <td class="num">${remL(l)?`<s class="muted">${money(l.pu)}</s><br>${money(puNet(l))}`:money(l.pu)}</td>
-    <td><span class="suffix rem-in"><input type="number" min="0" max="100" step="0.5" data-drem="${l.montureId}" value="${remL(l)||''}" placeholder="0" aria-label="Remise sur ${esc(l.designation)} en pourcentage"><span>%</span></span></td>
+    <td><span class="rem-box"><input type="number" min="0" ${isE(l.remT)?`max="${l.pu}" step="0.01"`:'max="100" step="0.5"'} data-drem="${l.montureId}" value="${remL(l)||''}" placeholder="0" aria-label="Remise sur ${esc(l.designation)} ${isE(l.remT)?'en euros par monture':'en pourcentage'}"><button type="button" class="unit-tg" data-act="drem-u" data-id="${l.montureId}" title="Passer la remise ${isE(l.remT)?'en %':'en € par monture'}" aria-label="Unité de la remise : ${isE(l.remT)?'euros, passer en pourcentage':'pourcentage, passer en euros'}">${isE(l.remT)?'€':'%'}</button></span></td>
     <td class="num"><b>${money(lineHT(l))}</b></td>
     <td><button class="icon-btn" data-act="drm" data-id="${l.montureId}" aria-label="Retirer la ligne">×</button></td></tr>`}).join('')
     :`<tr><td colspan="6"><div class="empty-state" style="padding:36px 12px"><p>Scannez une monture pour l'ajouter.</p></div></td></tr>`;
-  const t=totals(doc.lignes,doc.remise,doc.regime),nb=doc.lignes.reduce((a,l)=>a+l.qte,0);
+  const t=totals(doc.lignes,doc.remise,doc.regime,doc.remiseT),nb=doc.lignes.reduce((a,l)=>a+l.qte,0);
   $('#doc-side').innerHTML=`<h3>${doc.kind==='vente'?'Récapitulatif de la vente':'Récapitulatif du devis'}</h3>
   <div class="side-fields">
-    <label>Remise client<span class="suffix"><input id="d-rem" type="number" min="0" max="100" step="0.5" value="${doc.remise}"><span>%</span></span></label>
+    <label>Remise client${isE(doc.remiseT)?' (montant HT)':''}<span class="rem-box wide"><input id="d-rem" type="number" min="0" ${isE(doc.remiseT)?'step="0.01"':'max="100" step="0.5"'} value="${doc.remise||''}" placeholder="0"><button type="button" class="unit-tg" data-act="d-rem-u" title="Passer la remise client ${isE(doc.remiseT)?'en %':'en montant €'}" aria-label="Unité de la remise client : ${isE(doc.remiseT)?'euros, passer en pourcentage':'pourcentage, passer en euros'}">${isE(doc.remiseT)?'€':'%'}</button></span></label>
     ${doc.kind==='vente'?`<label>Règlement<select id="d-pay">${[PAY_LATER,...PAY_MODES].map(p=>`<option ${p===doc.paiement?'selected':''}>${p}</option>`).join('')}</select><span class="hint">${doc.paiement===PAY_LATER?'La facture apparaîtra dans les impayés jusqu\'à son règlement':'La vente sera enregistrée comme payée'}</span></label>${PAY_DETAIL[doc.paiement]?payDetailFields(doc.paiement,'d',{banque:doc.banque,ref:doc.ref}):''}`
       :`<label>Valable jusqu'au<input id="d-val" type="date" value="${doc.validite}"></label>`}
   </div>
   <div class="regime${doc.regime==='fr'?' fr':''}">${REGIME[doc.regime]}<span>Modifiable dans la fiche du client</span></div>
   ${(()=>{const c=cli(doc.clientId);if(doc.kind!=='vente'||!c||!(c.plafond>0)||doc.paiement!==PAY_LATER)return'';const e=encoursOf(c.id),apres=e+t.ttc;
     return apres>c.plafond?`<div class="regime warn">Plafond de crédit dépassé<span>Encours actuel ${money(e)} + cette vente ${money(t.ttc)} = ${money(apres)}, pour un plafond de ${money(c.plafond)}.</span></div>`:''})()}
-  <dl class="totals"><dt>${nb} monture${nb>1?'s':''}</dt><dd>${money(t.brut)}</dd>${remTotals({...t,remise:doc.remise},false)}
+  <dl class="totals"><dt>${nb} monture${nb>1?'s':''}</dt><dd>${money(t.brut)}</dd>${remTotals({...t,remise:doc.remise,remiseT:doc.remiseT},false)}
    ${taxLines(t,doc.regime,doc.tvaIntra)}</dl>
   <button class="btn primary block" data-act="doc-ok" ${doc.lignes.length?'':'disabled'}>${doc.kind==='vente'?'Valider la vente':'Enregistrer le devis'}</button>
   <button class="btn block ghost" data-act="doc-cancel">Annuler</button>`;
@@ -366,11 +371,11 @@ async function validateDoc(){
     const lack=doc.lignes.filter(l=>{const m=mon(l.montureId);return!m||l.qte>m.qte});
     if(lack.length){toast('Stock insuffisant pour : '+lack.map(l=>l.etiquette).join(', '));return}
   }
-  const t=totals(doc.lignes,doc.remise,doc.regime),y=new Date().getFullYear();
+  const t=totals(doc.lignes,doc.remise,doc.regime,doc.remiseT),y=new Date().getFullYear();
   let nums;docBusy=true;
   try{nums=doc.kind==='vente'?[await alloc('V',S.seqV||0),await alloc('FA',S.seqFA||0)]:[await alloc('D',S.seqD||0)]}
   catch(x){toast('Connexion perdue : rien n\'a été enregistré, réessayez.');return}finally{docBusy=false}
-  const base={id:doc.kind[0]+Date.now().toString(36),kind:doc.kind,date:new Date().toISOString(),clientId:doc.clientId,lignes:doc.lignes.map(l=>({...l,pa:l.pa!=null?l.pa:((mon(l.montureId)||{}).pa||0)})),remise:+doc.remise||0,regime:doc.regime,tvaIntra:doc.regime==='ue'?doc.tvaIntra:'',...t};
+  const base={id:doc.kind[0]+Date.now().toString(36),kind:doc.kind,date:new Date().toISOString(),clientId:doc.clientId,lignes:doc.lignes.map(l=>({...l,pa:l.pa!=null?l.pa:((mon(l.montureId)||{}).pa||0)})),remise:+doc.remise||0,...(isE(doc.remiseT)?{remiseT:'€'}:{}),regime:doc.regime,tvaIntra:doc.regime==='ue'?doc.tvaIntra:'',...t};
   if(doc.kind==='vente'){
     S.seqV=Math.max(S.seqV||0,nums[0]);S.seqFA=Math.max(S.seqFA||0,nums[1]);const v={...base,num:'V'+y+'-'+pad4(nums[0]),facture:'FA'+y+'-'+pad4(nums[1]),paiement:doc.paiement};
     v.lignes.forEach(l=>{mon(l.montureId).qte-=l.qte});factureFor(v);v.regMig=true;S.ventes.push(v);
@@ -1389,7 +1394,7 @@ function invoicePDF(v){
   cl.forEach((t,i)=>pdf.text(txt(t),114,y+17+i*4.2));
   y+=44;
   const hasRem=v.lignes.some(l=>remL(l));
-  const body=v.lignes.map(l=>{const r=[txt(l.etiquette),txt(l.designation+(l.detail?' - '+l.detail:'')),String(l.qte),eur(l.pu)];if(hasRem)r.push(remL(l)?'-'+txt(nf2.format(remL(l)).replace(/,00$/,''))+' %':'');r.push(eur(lineHT(l)));return r});
+  const body=v.lignes.map(l=>{const r=[txt(l.etiquette),txt(l.designation+(l.detail?' - '+l.detail:'')),String(l.qte),eur(l.pu)];if(hasRem)r.push(remL(l)?(isE(l.remT)?'-'+eur(remL(l)):'-'+txt(fmtPct(remL(l)))+' %'):'');r.push(eur(lineHT(l)));return r});
   if(pdf.autoTable){
     const head=['Réf.','Désignation','Qté','PU HT'];if(hasRem)head.push('Remise');head.push('Montant HT');
     const cs={0:{cellWidth:20},2:{halign:'right',cellWidth:12},3:{halign:'right',cellWidth:24}};
@@ -1401,7 +1406,7 @@ function invoicePDF(v){
   }else{body.forEach(r=>{pdf.text(r.join('   '),L,y);y+=5});y+=4}
   const tot=[];if(v.rem||v.remLignes)tot.push(['Total brut HT',eur(v.brut)]);
   if(v.remLignes)tot.push(['Remises sur montures','-'+eur(v.remLignes)]);
-  if(v.rem)tot.push(['Remise client '+txt(nf.format(v.remise))+' %','-'+eur(v.rem)]);
+  if(v.rem)tot.push([txt(remCliLabel(v)),'-'+eur(v.rem)]);
   tot.push(['Total HT',eur(v.ht)]);
   if(reg==='fr')tot.push(['TVA 20 %',eur(v.tva)],['Total TTC',eur(v.ttc)]);else tot.push(['TVA','Non applicable']);
   const paid=paidOf(v);if(paid>0)tot.push(['Déjà réglé','-'+eur(paid)]);
@@ -2298,8 +2303,8 @@ document.addEventListener('change',e=>{
   const t=e.target;
   if(t.id==='fp')fillRows();
   else if(t.dataset.dq){setDq(t.dataset.dq,Math.max(0,Math.round(+t.value||0)))}
-  else if(t.dataset.drem&&doc){const l=doc.lignes.find(x=>x.montureId===t.dataset.drem);if(l){const v=Math.min(100,Math.max(0,Math.round((+String(t.value).replace(',','.')||0)*100)/100));if(v)l.rem=v;else delete l.rem;drawDoc()}}
-  else if(t.id==='d-rem'){doc.remise=Math.min(100,Math.max(0,+t.value||0));drawDoc()}
+  else if(t.dataset.drem&&doc){const l=doc.lignes.find(x=>x.montureId===t.dataset.drem);if(l){let v=Math.max(0,Math.round((+String(t.value).replace(',','.')||0)*100)/100);v=isE(l.remT)?Math.min(v,+l.pu||0):Math.min(100,v);if(v)l.rem=v;else delete l.rem;drawDoc()}}
+  else if(t.id==='d-rem'){const v=Math.max(0,Math.round((+String(t.value).replace(',','.')||0)*100)/100);doc.remise=isE(doc.remiseT)?v:Math.min(100,v);drawDoc()}
   else if(t.id==='d-pay'){doc.paiement=t.value;drawDoc()}
   else if(t.id==='d-banque'&&doc)doc.banque=t.value.trim();
   else if(t.id==='d-ref'&&doc)doc.ref=t.value.trim();
@@ -2330,6 +2335,8 @@ document.addEventListener('click',e=>{
     case'dq+':setDq(id,1,true);break;
     case'dq-':setDq(id,-1,true);break;
     case'drm':setDq(id,0);break;
+    case'drem-u':{const l=doc&&doc.lignes.find(x=>x.montureId===id);if(l){if(isE(l.remT))delete l.remT;else l.remT='€';delete l.rem;drawDoc();const i=document.querySelector(`[data-drem="${id}"]`);if(i)i.focus()}break}
+    case'd-rem-u':if(doc){if(isE(doc.remiseT))delete doc.remiseT;else doc.remiseT='€';doc.remise=0;drawDoc();const i=$('#d-rem');if(i)i.focus()}break;
     case'doc-ok':validateDoc();break;
     case'doc-cancel':{const c=doc&&doc.clientId;doc=null;location.hash=c?'client-'+c:'clients';break}
     case'showdoc':showDoc(id);break;
