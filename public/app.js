@@ -788,7 +788,7 @@ function readCatalogue(file){
         const enc=(head.match(/encoding=["']([\w-]+)["']/i)||[])[1]||'utf-8';let txt;try{txt=new TextDecoder(enc).decode(fr.result)}catch(e){txt=new TextDecoder().decode(fr.result)}
         const x=xmlRows(txt);
         if(!x){area.innerHTML='<p class="warn-txt">Ce fichier XML ne contient aucun code EAN reconnaissable. Envoyez-le à l\'assistance pour l\'adapter.</p>';return}
-        prepareImport(file.name,x.rows,x.info);return;
+        prepareImport(file.name,x.rows,x.info,x);return;
       }
       if(window.XLSX){const wb=XLSX.read(new Uint8Array(fr.result),{type:'array'});
         const best=wb.SheetNames.map(n=>XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:true,defval:''})).sort((a,b)=>b.length-a.length)[0];rows=best}
@@ -802,8 +802,9 @@ function readCatalogue(file){
 /* Catalogue XML (norme OPTO11 d'EDI-Optique ou autre) : chaque article porteur d'un code EAN/GTIN devient une ligne.
    Les informations des éléments parents (marque, modèle…) sont recopiées sur chaque article. */
 function xmlRows(txt){
-  const xd=new DOMParser().parseFromString(txt,'application/xml');
+  const xd=new DOMParser().parseFromString(txt.replace(/^\uFEFF/,''),'application/xml');
   if(xd.getElementsByTagName('parsererror').length)throw new Error('xml');
+  if(xd.getElementsByTagNameNS('*','ContainedOpticCatalogueItem').length)return optoRows(xd);
   const name=el=>el.localName||el.nodeName;
   const leafs=el=>[...el.children].length===0;
   const val=el=>(el.textContent||'').trim();
@@ -835,7 +836,39 @@ function xmlRows(txt){
   const used=cols.filter(k=>rows.some(o=>o[k]!==''&&o[k]!=null));
   return{rows:[used,...rows.map(o=>used.map(k=>o[k]??''))],info:`XML · élément article « ${tag} »`};
 }
-function prepareImport(name,rows,info){
+/* Norme OPTO11 (EDI-Optique) : lecture directe des articles du catalogue.
+   Caractéristiques : 482 = calibre, 518 = pont, 485 = branche ; prix AAA = prix net d'achat. */
+function optoRows(xd){
+  const kids=(el,n)=>el?[...el.children].filter(c=>c.localName===n):[];
+  const kid=(el,n)=>kids(el,n)[0]||null;
+  const tx=(el,n)=>{const k=kid(el,n);return k?(k.textContent||'').trim():''};
+  const deep=(el,n)=>el?el.getElementsByTagNameNS('*',n)[0]||null:null;
+  const items=[...xd.getElementsByTagNameNS('*','ContainedOpticCatalogueItem')];
+  const fmt=(deep(xd,'Format')||{}).textContent||'OPTO11';
+  const sup=deep(xd,'SupplierOpticParty')||deep(xd,'ProviderOpticParty')||deep(xd,'ManufacturerOpticParty');
+  const supNom=sup?tx(sup,'Name'):'';
+  const SOL=/Sunglass/i;
+  const head=['GTIN','Marque','Modèle','Coloris','Calibre','Pont','Branche','Prix net d\'achat','Prix public','Type','Code douanier'];
+  const rows=[];
+  items.forEach(it=>{
+    if(tx(it,'ActionCode')==='3')return; // article retiré du catalogue
+    const p=kid(it,'ReferencedOpticProduct');if(!p)return;
+    const idEl=[...p.getElementsByTagNameNS('*','ID')].find(e=>e.parentElement.localName==='SpecifiedOpticProductIdentification'&&(!e.getAttribute('schemeID')||/GTIN|EAN/i.test(e.getAttribute('schemeID'))));
+    const ean=idEl?idEl.textContent.trim():'';
+    const ch={};[...p.getElementsByTagNameNS('*','ApplicableOpticProductCharacteristic')].forEach(c=>{const id=tx(c,'ID');const v=tx(c,'ValueMeasure')||tx(c,'ValueText')||tx(c,'ValueCode');if(id&&v&&!(id in ch))ch[id]=v});
+    const cc=tx(p,'ColorCode'),cdesc=tx(p,'ColorDescription'),info=tx(it,'AdditionalInformation');
+    let modele=tx(p,'ModelName')||tx(p,'Name');if(cc&&modele.toUpperCase().endsWith(' '+cc.toUpperCase()))modele=modele.slice(0,-cc.length-1).trim();
+    const coul=[cc,info&&info!==cc?info:(cdesc&&cdesc!==cc?cdesc:'')].filter(Boolean).join(' ');
+    let pa='',pv='';[...it.getElementsByTagNameNS('*','AssignedOpticPrice')].forEach(ap=>{const t=tx(ap,'TypeCode'),v=tx(ap,'ChargeAmount');if(/^(AAA|AAB|NET|INV)$/i.test(t)&&pa==='')pa=v;else if(/^(RRP|RTP|SRP|PUB|AAE)$/i.test(t)&&pv==='')pv=v});
+    const sub=(deep(p,'SubClassCode')||{}).textContent||'';
+    rows.push([ean,tx(p,'BrandName')||tx(p,'SubBrandName'),modele,coul,ch['482']||'',ch['518']||'',ch['485']||'',pa,pv,SOL.test(sub)?'Solaire':'Optique',ch['977']||'']);
+  });
+  if(!rows.length)return null;
+  const brands=[...new Set(rows.map(r=>r[1]).filter(Boolean))];
+  return{rows:[head,...rows],info:`Norme ${fmt}${supNom?' · fournisseur '+supNom:''} · ${brands.length} marque${brands.length>1?'s':''} : ${brands.join(', ')}`,
+    map:{ean:0,marque:1,modele:2,coloris:3,calibre:4,pont:5,branche:6,pa:7,pv:rows.some(r=>r[8])?8:undefined},fournisseur:supNom,opto:true};
+}
+function prepareImport(name,rows,info,x){
   rows=rows.filter(r=>r.some(c=>String(c).trim()!==''));
   let hi=0;if(!info)for(let i=0;i<Math.min(20,rows.length);i++){if(rows[i].filter(c=>typeof c==='string'&&c.trim()&&isNaN(+c)).length>=3){hi=i;break}}
   const headers=(rows[hi]||[]).map((h,i)=>String(h).trim()||`Colonne ${i+1}`);
@@ -848,10 +881,15 @@ function prepareImport(name,rows,info){
     if(k==='ean'&&cand.length>1){const g=cand.filter(j=>data.slice(0,30).some(r=>/^\d{8,14}$/.test(cellEAN(r[j]))));if(g.length)cand=g}
     const i=cand.length?cand[0]:-1;if(i>=0){map[k]=i;used.add(i)}});
   if(map.ean==null){const i=headers.findIndex((h,j)=>!used.has(j)&&data.slice(0,30).filter(r=>/^\d{12,14}$/.test(cellEAN(r[j]))).length>=Math.min(5,data.length));if(i>=0)map.ean=i}
-  const guessBrand=(name.match(/oz/i)?'OZ':'');
-  imp={name,headers,data,map,marque:guessBrand,coef:'',info:info||''};
+  if(x&&x.map)Object.keys(map).forEach(k=>delete map[k]),Object.entries(x.map).forEach(([k,v])=>{if(v!=null)map[k]=v});
+  const guessBrand=x&&x.opto?'':(name.match(/oz/i)?'OZ':'');
+  const fn=x&&x.fournisseur?normTxtF(x.fournisseur):'';
+  const fMatch=fn?S.fournisseurs.find(f=>normTxtF(f.nom)===fn):null;
+  imp={name,headers,data,map,marque:guessBrand,coef:'',info:info||'',fournisseurNom:x&&x.fournisseur||'',fournisseurId:fMatch?fMatch.id:(x&&x.fournisseur?'__opto':'')};
   drawImport();
 }
+const normTxtF=t=>String(t||'').toLowerCase().normalize('NFD').replace(/[^a-z0-9]/g,'');
+const brandsOf=()=>imp?[...new Set(mappedRows().map(r=>r.marque).filter(Boolean))]:[];
 function mappedRows(){
   const {data,map}=imp;const g=(r,k)=>map[k]!=null?r[map[k]]:'';
   return data.map(r=>{
@@ -874,8 +912,8 @@ function drawImport(){
   <p class="hint" style="margin:0 0 10px">Prismea a reconnu les colonnes qu'il pouvait. Corrigez-les si besoin.</p>
   <div class="map-grid">${CAT_FIELDS.map(([k,l,req])=>`<label>${l}${req?' <span class="req">*</span>':''}${sel(k)}</label>`).join('')}
     <label>Marque si absente du fichier<input id="imp-marque" value="${esc(imp.marque)}" placeholder="Ex. OZ" list="dl-imp-b"></label><datalist id="dl-imp-b">${S.marques.map(b=>`<option value="${esc(b.nom)}"></option>`).join('')}</datalist>
-    <label>Fournisseur de la marque<select id="imp-four">${fourOptions(imp.fournisseurId||(marqueOfName(imp.marque)||{}).fournisseurId||'',false)}</select></label>
-    <label>Coefficient de la marque<span class="suffix"><input id="imp-coef" type="number" min="0" step="0.05" value="${esc(imp.coef)}" placeholder="${coefOf(imp.marque)?fmtCoef(coefOf(imp.marque)):'ex. 2,2'}"><span>× achat</span></span><span class="hint">Prix de vente = prix d'achat × coefficient, arrondi à l'euro. Enregistré pour la marque.</span></label></div>
+    <label>Fournisseur ${brandsOf().length>1?'des marques':'de la marque'}<select id="imp-four">${imp.fournisseurNom&&!S.fournisseurs.some(f=>normTxtF(f.nom)===normTxtF(imp.fournisseurNom))?`<option value="__opto" ${imp.fournisseurId==='__opto'?'selected':''}>Créer le fournisseur « ${esc(imp.fournisseurNom)} »</option>`:''}${fourOptions(imp.fournisseurId==='__opto'?'':imp.fournisseurId||(marqueOfName(imp.marque)||{}).fournisseurId||'',false)}</select></label>
+    <label>Coefficient de la marque<span class="suffix"><input id="imp-coef" type="number" min="0" step="0.05" value="${esc(imp.coef)}" placeholder="${coefOf(imp.marque)?fmtCoef(coefOf(imp.marque)):'ex. 2,2'}"><span>× achat</span></span><span class="hint">Prix de vente = prix d'achat × coefficient, arrondi à l'euro. ${brandsOf().length>1?`Appliqué aux ${brandsOf().length} marques du fichier (${brandsOf().map(esc).join(', ')}) ; laissez vide pour garder le coefficient de chaque marque.`:'Enregistré pour la marque.'}</span></label></div>
   <h3 style="margin-top:18px">Aperçu</h3>
   <div class="table-wrap"><table><thead><tr><th>EAN</th><th>Marque</th><th>Modèle</th><th>Coloris</th><th>Taille</th><th class="num">Achat HT</th><th class="num">Vente HT</th></tr></thead><tbody>
   ${rows.slice(0,8).map(r=>{const bad=!(normEAN(r.ean).length>=8&&r.modele&&r.marque);return`<tr class="${bad?'bad-row':''}"><td class="mono">${esc(r.ean)||'<span class="warn-txt">manquant</span>'}</td><td>${esc(r.marque)||'<span class="warn-txt">manquante</span>'}</td><td>${esc(r.modele)||'<span class="warn-txt">manquant</span>'}</td><td>${esc(r.coloris)}</td><td class="mono">${esc([r.calibre,r.pont].filter(Boolean).join('□')+(r.branche?' '+r.branche:''))}</td><td class="num">${r.pa?money(r.pa):'—'}</td><td class="num">${r.pv?money(r.pv):'—'}</td></tr>`}).join('')}
@@ -887,7 +925,8 @@ function runImport(){
   const rows=mappedRows().filter(r=>normEAN(r.ean).length>=8&&r.modele&&r.marque);
   const now=new Date().toISOString();let nw=0,up=0,ms=0;
   const cf=+String(imp.coef).replace(',','.');
-  const fid=$('#imp-four')?.value||imp.fournisseurId||'';
+  let fid=$('#imp-four')?.value||imp.fournisseurId||'';
+  if(fid==='__opto'){const f=ensureFournisseur(imp.fournisseurNom);fid=f.id}
   [...new Set(rows.map(r=>r.marque))].forEach(n=>{const b=ensureMarque(n);if(cf>0)b.coef=r2(cf);if(fid)b.fournisseurId=fid;rows.forEach(r=>{if(r.marque===n)r.marque=b.nom})});
   const idx=new Map(S.catalogue.map((c,i)=>[normEAN(c.ean),i]));
   rows.forEach(r=>{const k=normEAN(r.ean);const e={...r,id:'e'+k,importe:now};
