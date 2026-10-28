@@ -40,7 +40,7 @@ function buildState() {
   const montures = modeles.map((m, i) => {
     const pa = m[6];
     return { id: 'm' + (i + 1), etiquette: nextEtq(m[0]), ean: '80' + pad(51234567000 + i * 7, 11), marque: m[0], modele: m[1], coloris: m[2],
-      calibre: String(m[3]), pont: String(m[4]), branche: String(m[5]), pa, pv: Math.round(pa * coef(m[0])), seuil: 3, qte: 0 };
+      calibre: String(m[3]), pont: String(m[4]), branche: String(m[5]), pa, pv: Math.round(pa * coef(m[0]) * 100) / 100, seuil: 3, qte: 0 };
   });
   const catalogue = montures.map(m => ({ id: 'e' + m.ean.replace(/^0+/, ''), ean: m.ean, marque: m.marque, modele: m.modele, coloris: m.coloris,
     calibre: m.calibre, pont: m.pont, branche: m.branche, pa: m.pa, pv: m.pv, importe: iso(addDays(now, -100)) }));

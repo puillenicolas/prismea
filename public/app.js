@@ -411,8 +411,8 @@ function ensureFournisseur(nom){
   return f;
 }
 const coefOf=nom=>{const b=S.marques.find(x=>x.nom.toLowerCase()===String(nom||'').trim().toLowerCase());return b&&+b.coef>0?+b.coef:0};
-/* Prix calculé arrondi à l'euro le plus proche */
-const pvFrom=(pa,c)=>Math.round((pa||0)*c);
+/* Prix calculé arrondi au centime */
+const pvFrom=(pa,c)=>Math.round(Math.round((pa||0)*c*10000)/100)/100;
 function applyCoef(m){const c=coefOf(m.marque);if(c&&!m.pvManuel&&m.pa>0)m.pv=pvFrom(m.pa,c);return m}
 const fmtCoef=c=>String(c).replace('.',',');
 S.seqM=S.seqM||S.montures.reduce((mx,m)=>Math.max(mx,+(m.etiquette.match(/\d+$/)||[0])[0]),0);
@@ -522,7 +522,7 @@ function montureForm(m,onSaved){
     const syncPv=()=>{
       const c=coefOf($('#m-marque').value.trim()),man=$('#m-man').checked,pa=+$('#m-pa').value||0,pv=$('#m-pv');
       $('#m-manwrap').hidden=!c;
-      if(c&&!man){pv.value=pa?pvFrom(pa,c).toFixed(2):'';pv.disabled=true;$('#m-pvhint').textContent=`Calculé : prix d'achat × ${fmtCoef(c)}, arrondi à l'euro`}
+      if(c&&!man){pv.value=pa?pvFrom(pa,c).toFixed(2):'';pv.disabled=true;$('#m-pvhint').textContent=`Calculé : prix d'achat × ${fmtCoef(c)}, arrondi au centime`}
       else{pv.disabled=false;$('#m-pvhint').textContent=c?'Prix fixé à la main, le coefficient est ignoré':'Aucun coefficient défini pour cette marque'}
     };
     ['m-marque','m-pa'].forEach(i=>$('#'+i).addEventListener('input',syncPv));$('#m-man').addEventListener('change',syncPv);syncPv();
@@ -640,7 +640,7 @@ function fourOptions(sel,withNew){
 function marquesTab(){
   if(!S.marques.length)return`<div class="table-wrap"><div class="empty-state"><h3>Aucune marque</h3><p>Créez vos marques et rattachez-les à leur fournisseur. Elles sont aussi créées automatiquement à l'import d'un catalogue.</p><button class="btn primary" data-act="b-new">Nouvelle marque</button></div></div>`;
   const list=[...S.marques].sort((a,b)=>a.nom.localeCompare(b.nom,'fr'));
-  return`<div class="row-between"><p class="muted">Prix de vente HT = prix d'achat HT × coefficient de la marque, arrondi à l'euro. Une monture dont le prix a été fixé à la main n'est pas recalculée.</p><button class="btn" data-act="b-new">Nouvelle marque</button></div>
+  return`<div class="row-between"><p class="muted">Prix de vente HT = prix d'achat HT × coefficient de la marque, arrondi au centime. Une monture dont le prix a été fixé à la main n'est pas recalculée.</p><button class="btn" data-act="b-new">Nouvelle marque</button></div>
   ${oldCodes().length?`<div class="regime warn" style="margin-bottom:14px">${oldCodes().length} monture${oldCodes().length>1?'s ont':' a'} encore un ancien code étiquette tout en chiffres (ex. ${esc(oldCodes()[0].etiquette)}).<span>Les nouvelles montures reçoivent un code « 3 lettres de la marque + 3 chiffres ». <button class="link" data-act="etq-renum">Passer les anciennes au nouveau format</button></span></div>`:''}
   <div class="table-wrap"><table><thead><tr><th>Marque</th><th>Préfixe</th><th>Fournisseur</th><th class="num">Références</th><th class="num">En stock</th><th>Coefficient</th><th>Exemple</th><th></th></tr></thead><tbody>
   ${list.map(b=>{const ms=S.montures.filter(m=>m.marque===b.nom),c=coefOf(b.nom),f=fourOf(b.fournisseurId);
@@ -913,7 +913,7 @@ function drawImport(){
   <div class="map-grid">${CAT_FIELDS.map(([k,l,req])=>`<label>${l}${req?' <span class="req">*</span>':''}${sel(k)}</label>`).join('')}
     <label>Marque si absente du fichier<input id="imp-marque" value="${esc(imp.marque)}" placeholder="Ex. OZ" list="dl-imp-b"></label><datalist id="dl-imp-b">${S.marques.map(b=>`<option value="${esc(b.nom)}"></option>`).join('')}</datalist>
     <label>Fournisseur ${brandsOf().length>1?'des marques':'de la marque'}<select id="imp-four">${imp.fournisseurNom&&!S.fournisseurs.some(f=>normTxtF(f.nom)===normTxtF(imp.fournisseurNom))?`<option value="__opto" ${imp.fournisseurId==='__opto'?'selected':''}>Créer le fournisseur « ${esc(imp.fournisseurNom)} »</option>`:''}${fourOptions(imp.fournisseurId==='__opto'?'':imp.fournisseurId||(marqueOfName(imp.marque)||{}).fournisseurId||'',false)}</select></label>
-    <label>Coefficient de la marque<span class="suffix"><input id="imp-coef" type="number" min="0" step="0.05" value="${esc(imp.coef)}" placeholder="${coefOf(imp.marque)?fmtCoef(coefOf(imp.marque)):'ex. 2,2'}"><span>× achat</span></span><span class="hint">Prix de vente = prix d'achat × coefficient, arrondi à l'euro. ${brandsOf().length>1?`Appliqué aux ${brandsOf().length} marques du fichier (${brandsOf().map(esc).join(', ')}) ; laissez vide pour garder le coefficient de chaque marque.`:'Enregistré pour la marque.'}</span></label></div>
+    <label>Coefficient de la marque<span class="suffix"><input id="imp-coef" type="number" min="0" step="0.05" value="${esc(imp.coef)}" placeholder="${coefOf(imp.marque)?fmtCoef(coefOf(imp.marque)):'ex. 2,2'}"><span>× achat</span></span><span class="hint">Prix de vente = prix d'achat × coefficient, arrondi au centime. ${brandsOf().length>1?`Appliqué aux ${brandsOf().length} marques du fichier (${brandsOf().map(esc).join(', ')}) ; laissez vide pour garder le coefficient de chaque marque.`:'Enregistré pour la marque.'}</span></label></div>
   <h3 style="margin-top:18px">Aperçu</h3>
   <div class="table-wrap"><table><thead><tr><th>EAN</th><th>Marque</th><th>Modèle</th><th>Coloris</th><th>Taille</th><th class="num">Achat HT</th><th class="num">Vente HT</th></tr></thead><tbody>
   ${rows.slice(0,8).map(r=>{const bad=!(normEAN(r.ean).length>=8&&r.modele&&r.marque);return`<tr class="${bad?'bad-row':''}"><td class="mono">${esc(r.ean)||'<span class="warn-txt">manquant</span>'}</td><td>${esc(r.marque)||'<span class="warn-txt">manquante</span>'}</td><td>${esc(r.modele)||'<span class="warn-txt">manquant</span>'}</td><td>${esc(r.coloris)}</td><td class="mono">${esc([r.calibre,r.pont].filter(Boolean).join('□')+(r.branche?' '+r.branche:''))}</td><td class="num">${r.pa?money(r.pa):'—'}</td><td class="num">${r.pv?money(r.pv):'—'}</td></tr>`}).join('')}
