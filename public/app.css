@@ -367,3 +367,10 @@ input.auto,select.auto{background:var(--accent-soft);border-color:var(--accent)}
 /* Attestation de réception */
 .att-box{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2)}
 .att-box .sub{display:block;color:var(--muted);font-size:12.5px}
+
+/* Remise par monture */
+.suffix.rem-in{display:inline-block;width:86px}
+.suffix.rem-in input{padding:6px 26px 6px 8px;text-align:right}
+.suffix.rem-in span{right:9px}
+.rem-tag{display:inline-block;font-size:11px;font-weight:700;color:var(--accent);margin-left:2px}
+td s.muted{font-size:12px}

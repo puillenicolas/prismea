@@ -81,12 +81,21 @@ function regimeOf(c){
 }
 const regOf=d=>d.regime||(d.tvaFR?'fr':'export');
 const REGIME={fr:'TVA française 20\u202F% appliquée',ue:'Livraison intracommunautaire hors taxes',export:'Vente hors taxes (exportation)'};
+/* Remise par ligne : en % (l.rem) ; le prix net unitaire est arrondi au centime */
+const remL=l=>Math.min(100,Math.max(0,+l.rem||0));
+const puNet=l=>r2(l.pu*(1-remL(l)/100));
+const lineHT=l=>r2(l.qte*puNet(l));
 function totals(lignes,remise,regime){
   const tvaFR=regime===true||regime==='fr';
-  const brut=lignes.reduce((t,l)=>t+l.qte*l.pu,0),rem=brut*(+remise||0)/100,ht=brut-rem;
-  const tva=r2(tvaFR?r2(ht)*TVA_FR/100:0);
-  return{brut:r2(brut),rem:r2(rem),ht:r2(ht),tva,ttc:r2(ht+tva)};
+  const brut=r2(lignes.reduce((t,l)=>t+l.qte*l.pu,0)),net=r2(lignes.reduce((t,l)=>t+lineHT(l),0)),remLignes=r2(brut-net);
+  const rem=r2(net*(+remise||0)/100),ht=r2(net-rem);
+  const tva=r2(tvaFR?ht*TVA_FR/100:0);
+  return{brut,remLignes,net,rem,ht,tva,ttc:r2(ht+tva)};
 }
+/* Lignes de remise du récapitulatif (remises sur montures puis remise client globale) */
+const remTotals=(d,brut=true)=>(brut&&(d.remLignes||d.rem)&&d.brut?`<dt>Total brut HT</dt><dd>${money(d.brut)}</dd>`:'')+(d.remLignes?`<dt>Remises sur montures</dt><dd>−${money(d.remLignes)}</dd>`:'')+(d.rem?`<dt>Remise client ${nf.format(d.remise)} %</dt><dd>−${money(d.rem)}</dd>`:'');
+/* Cellule « PU HT » avec le prix barré quand la ligne est remisée */
+const puCell=l=>remL(l)?`<s class="muted">${money(l.pu)}</s><br><b>${money(puNet(l))}</b> <span class="rem-tag">−${nf2.format(remL(l)).replace(/,00$/,'')} %</span>`:money(l.pu);
 function taxLines(t,reg,intra){
   if(reg==='fr')return`<dt>Total HT</dt><dd>${money(t.ht)}</dd><dt>TVA ${TVA_FR}\u202F%</dt><dd>${money(t.tva)}</dd><dt class="big">Total TTC</dt><dd class="big">${money(t.ttc)}</dd>`;
   const legal=reg==='ue'?`Exonération de TVA, article 262 ter I du CGI (livraison intracommunautaire). Autoliquidation par le client${intra?', n° TVA '+esc(intra):''}.`:'Exonération de TVA, article 262 I du CGI (exportation).';
@@ -97,6 +106,7 @@ const tailleOf=m=>m.calibre?`${m.calibre}□${m.pont||''}${m.branche?' '+m.branc
 function findMonture(code){
   const c=code.trim();if(!c)return null;const lc=c.toLowerCase(),k=normEAN(c);
   if(/^\d{1,7}$/.test(c)){const n=+c;const e=S.montures.find(m=>/^\d+$/.test(m.etiquette)&&+m.etiquette===n);if(e)return e}
+  const x=c.match(/^([A-Za-z]{3})\s*0*(\d{1,6})$/);if(x){const e=x[1].toUpperCase()+x[2].padStart(3,'0');const f=S.montures.find(m=>m.etiquette===e);if(f)return f}
   return S.montures.find(m=>m.etiquette.toLowerCase()===lc||(k.length>=8&&normEAN(m.ean)===k))||null;
 }
 const codeOf=c=>'CL'+String(c.num).padStart(4,'0');
@@ -303,16 +313,17 @@ function viewDoc(kind,clientId){
       <p class="scan-msg" id="scan-msg" role="status"></p>
       ${demo.length?`<p class="hint" style="margin:0">Montures d'exemple pour essayer : ${demo.map(m=>`<span class="mono">${m.etiquette}</span>`).join(', ')}. Elles seront remplacées par votre stock.</p>`:''}
     </section>
-    <div class="table-wrap"><table><thead><tr><th>Code étiquette</th><th>Monture</th><th>Quantité</th><th class="num">PU HT</th><th class="num">Montant HT</th><th></th></tr></thead><tbody id="doc-lines"></tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>Monture</th><th>Quantité</th><th class="num">PU HT</th><th>Remise</th><th class="num">Montant HT</th><th></th></tr></thead><tbody id="doc-lines"></tbody></table></div>
   </div><aside class="panel doc-side" id="doc-side"></aside></div>`;
 }
 function drawDoc(){
   const body=$('#doc-lines');if(!body||!doc)return;
   body.innerHTML=doc.lignes.length?doc.lignes.map(l=>{const m=mon(l.montureId);const over=doc.kind==='vente'&&m&&l.qte>m.qte;return`<tr>
-    <td class="mono">${esc(m?m.etiquette:l.etiquette)}</td>
-    <td><b>${esc(l.designation)}</b><span class="sub">${esc(l.detail)}${over?` · <span class="warn-txt">${m.qte} en stock</span>`:''}</span></td>
+    <td><b>${esc(l.designation)}</b><span class="sub"><span class="mono">${esc(m?m.etiquette:l.etiquette)}</span> · ${esc(l.detail)}${over?` · <span class="warn-txt">${m.qte} en stock</span>`:''}</span></td>
     <td><div class="qty"><button data-act="dq-" data-id="${l.montureId}" aria-label="Diminuer">−</button><input id="dq-${l.montureId}" type="number" min="1" data-dq="${l.montureId}" value="${l.qte}" aria-label="Quantité"><button data-act="dq+" data-id="${l.montureId}" aria-label="Augmenter">+</button></div></td>
-    <td class="num">${money(l.pu)}</td><td class="num"><b>${money(l.qte*l.pu)}</b></td>
+    <td class="num">${remL(l)?`<s class="muted">${money(l.pu)}</s><br>${money(puNet(l))}`:money(l.pu)}</td>
+    <td><span class="suffix rem-in"><input type="number" min="0" max="100" step="0.5" data-drem="${l.montureId}" value="${remL(l)||''}" placeholder="0" aria-label="Remise sur ${esc(l.designation)} en pourcentage"><span>%</span></span></td>
+    <td class="num"><b>${money(lineHT(l))}</b></td>
     <td><button class="icon-btn" data-act="drm" data-id="${l.montureId}" aria-label="Retirer la ligne">×</button></td></tr>`}).join('')
     :`<tr><td colspan="6"><div class="empty-state" style="padding:36px 12px"><p>Scannez une monture pour l'ajouter.</p></div></td></tr>`;
   const t=totals(doc.lignes,doc.remise,doc.regime),nb=doc.lignes.reduce((a,l)=>a+l.qte,0);
@@ -325,7 +336,7 @@ function drawDoc(){
   <div class="regime${doc.regime==='fr'?' fr':''}">${REGIME[doc.regime]}<span>Modifiable dans la fiche du client</span></div>
   ${(()=>{const c=cli(doc.clientId);if(doc.kind!=='vente'||!c||!(c.plafond>0)||doc.paiement!==PAY_LATER)return'';const e=encoursOf(c.id),apres=e+t.ttc;
     return apres>c.plafond?`<div class="regime warn">Plafond de crédit dépassé<span>Encours actuel ${money(e)} + cette vente ${money(t.ttc)} = ${money(apres)}, pour un plafond de ${money(c.plafond)}.</span></div>`:''})()}
-  <dl class="totals"><dt>${nb} monture${nb>1?'s':''}</dt><dd>${money(t.brut)}</dd>${t.rem?`<dt>Remise ${nf.format(doc.remise)} %</dt><dd>−${money(t.rem)}</dd>`:''}
+  <dl class="totals"><dt>${nb} monture${nb>1?'s':''}</dt><dd>${money(t.brut)}</dd>${remTotals({...t,remise:doc.remise},false)}
    ${taxLines(t,doc.regime,doc.tvaIntra)}</dl>
   <button class="btn primary block" data-act="doc-ok" ${doc.lignes.length?'':'disabled'}>${doc.kind==='vente'?'Valider la vente':'Enregistrer le devis'}</button>
   <button class="btn block ghost" data-act="doc-cancel">Annuler</button>`;
@@ -376,10 +387,10 @@ function showDoc(id){
   const c=cli(d.clientId);
   openModal((d.kind==='vente'?'Vente ':'Devis ')+d.num,(c?c.nom:'')+' · '+dF.format(new Date(d.date)),
   `<div class="table-wrap"><table><thead><tr><th>Monture</th><th class="num">Qté</th><th class="num">PU HT</th><th class="num">Montant HT</th></tr></thead><tbody>
-  ${d.lignes.map(l=>`<tr><td><b>${esc(l.designation)}</b><span class="sub"><span class="mono">${esc(l.etiquette)}</span> · ${esc(l.detail)}</span></td><td class="num">${l.qte}</td><td class="num">${money(l.pu)}</td><td class="num">${money(l.qte*l.pu)}</td></tr>`).join('')}
+  ${d.lignes.map(l=>`<tr><td><b>${esc(l.designation)}</b><span class="sub"><span class="mono">${esc(l.etiquette)}</span> · ${esc(l.detail)}</span></td><td class="num">${l.qte}</td><td class="num">${puCell(l)}</td><td class="num">${money(lineHT(l))}</td></tr>`).join('')}
   </tbody></table></div>
   <div class="doc-foot"><span class="muted">${d.kind==='vente'?'Paiement : '+esc(d.paiement):'Valable jusqu\'au '+dF.format(new Date(d.validite))}</span>
-  <dl class="totals" style="min-width:250px">${d.rem?`<dt>Remise ${nf.format(d.remise)} %</dt><dd>−${money(d.rem)}</dd>`:''}${taxLines(d,regOf(d),d.tvaIntra)}</dl></div>`,
+  <dl class="totals" style="min-width:250px">${remTotals(d)}${taxLines(d,regOf(d),d.tvaIntra)}</dl></div>`,
   `<button class="btn primary" data-act="close">Fermer</button>`);
 }
 
@@ -416,13 +427,24 @@ S.receptions.forEach(r=>{if(!r.fournisseurId&&r.fournisseur)r.fournisseurId=ensu
 S.montures.forEach(applyCoef);S.catalogue.forEach(c=>{const k=coefOf(c.marque);if(k&&c.pa)c.pv=pvFrom(c.pa,k)});
 save();
 let stockTab='montures',rec=null;
-/* Code étiquette : chiffres uniquement, sur 6 positions (000001, 000002…) */
-const nextEtiquette=async()=>{let e;do{const n=await alloc('M',S.seqM||0);S.seqM=Math.max(S.seqM||0,n);e=String(n).padStart(6,'0')}while(S.montures.some(m=>m.etiquette===e));return e};
-if(S.montures.some(m=>/\D/.test(m.etiquette))){
-  const cv=e=>/\D/.test(e||'')?String(+(String(e).match(/\d+$/)||[0])[0]).padStart(6,'0'):e;
-  S.montures.forEach(m=>m.etiquette=cv(m.etiquette));
-  [...S.ventes,...S.devis,...S.receptions].forEach(d=>d.lignes.forEach(l=>l.etiquette=cv(l.etiquette)));
-  save();
+/* Code étiquette : 3 premières lettres de la marque + numéro sur 3 chiffres (OZE001, LUM014…).
+   Le préfixe se règle dans la fiche de la marque ; chaque préfixe a son propre compteur (au-delà de 999 : OZE1000). */
+const autoPrefix=n=>(String(n||'').normalize('NFD').replace(/[^A-Za-z]/g,'').toUpperCase()+'XXX').slice(0,3);
+const cleanPrefix=v=>String(v||'').normalize('NFD').replace(/[^A-Za-z]/g,'').toUpperCase().slice(0,3);
+const prefixOf=nom=>{const b=marqueOfName(nom);return(b&&b.prefixe)||autoPrefix(nom)};
+async function nextEtiquette(marque){
+  const P=prefixOf(marque),key='seqM_'+P,re=new RegExp('^'+P+'(\\d+)$');
+  const floor=Math.max(S[key]||0,...S.montures.map(m=>{const x=String(m.etiquette).match(re);return x?+x[1]:0}));
+  let e;do{const n=await alloc('M_'+P,floor);S[key]=Math.max(S[key]||0,n);e=P+String(n).padStart(3,'0')}while(S.montures.some(m=>m.etiquette===e));
+  return e;
+}
+/* Anciennes montures au code tout chiffres (000012) : passage au nouveau format, à la demande */
+const oldCodes=()=>S.montures.filter(m=>/^\d+$/.test(m.etiquette));
+async function renumberOld(){
+  const list=oldCodes().sort((a,b)=>+a.etiquette-+b.etiquette),map={};
+  for(const m of list){const e=await nextEtiquette(m.marque);map[m.id]=e;m.etiquette=e}
+  [...S.ventes,...S.devis,...S.receptions].forEach(d=>(d.lignes||[]).forEach(l=>{if(map[l.montureId])l.etiquette=map[l.montureId]}));
+  save();return list.length;
 }
 const catByEAN=code=>{const k=normEAN(code);return k?S.catalogue.find(c=>normEAN(c.ean)===k):null};
 const fmtEAN=e=>String(e||'');
@@ -511,7 +533,7 @@ function montureForm(m,onSaved){
       if(!d.marque||!d.modele){toast('La marque et le modèle sont obligatoires.');return}
       if(d.ean&&S.montures.some(x=>x.id!==m.id&&normEAN(x.ean)===normEAN(d.ean))){toast('Ce code EAN est déjà attribué à une autre monture.');return}
       let res;
-      if(isNew){let etq;try{etq=await nextEtiquette()}catch(x){toast('Connexion perdue : la monture n\'a pas été créée.');return}res={id:'m'+Date.now().toString(36),etiquette:etq,qte:0,...d};S.montures.push(res)}
+      if(isNew){let etq;try{etq=await nextEtiquette(d.marque)}catch(x){toast('Connexion perdue : la monture n\'a pas été créée.');return}res={id:'m'+Date.now().toString(36),etiquette:etq,qte:0,...d};S.montures.push(res)}
       else{res=mon(m.id);Object.assign(res,d);res.demo=false;const q=$('#m-qte');if(q)res.qte=Math.round(+q.value||0)}
       res.marque=ensureMarque(res.marque).nom;applyCoef(res);delete res.taille;save();closeModal();
       if(onSaved)onSaved(res);else{render();toast(isNew?`Monture ${res.etiquette} créée`:'Fiche mise à jour')}
@@ -519,7 +541,7 @@ function montureForm(m,onSaved){
   });
 }
 async function montureFromCatalogue(c){
-  const m={id:'m'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),etiquette:await nextEtiquette(),ean:c.ean,marque:ensureMarque(c.marque).nom,modele:c.modele,coloris:c.coloris||'',
+  const m={id:'m'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),etiquette:await nextEtiquette(c.marque),ean:c.ean,marque:ensureMarque(c.marque).nom,modele:c.modele,coloris:c.coloris||'',
     calibre:c.calibre||'',pont:c.pont||'',branche:c.branche||'',pa:c.pa||0,pv:c.pv||0,seuil:2,qte:0};
   applyCoef(m);S.montures.push(m);save();return m;
 }
@@ -619,12 +641,13 @@ function marquesTab(){
   if(!S.marques.length)return`<div class="table-wrap"><div class="empty-state"><h3>Aucune marque</h3><p>Créez vos marques et rattachez-les à leur fournisseur. Elles sont aussi créées automatiquement à l'import d'un catalogue.</p><button class="btn primary" data-act="b-new">Nouvelle marque</button></div></div>`;
   const list=[...S.marques].sort((a,b)=>a.nom.localeCompare(b.nom,'fr'));
   return`<div class="row-between"><p class="muted">Prix de vente HT = prix d'achat HT × coefficient de la marque, arrondi à l'euro. Une monture dont le prix a été fixé à la main n'est pas recalculée.</p><button class="btn" data-act="b-new">Nouvelle marque</button></div>
-  <div class="table-wrap"><table><thead><tr><th>Marque</th><th>Fournisseur</th><th class="num">Références</th><th class="num">En stock</th><th>Coefficient</th><th>Exemple</th><th></th></tr></thead><tbody>
+  ${oldCodes().length?`<div class="regime warn" style="margin-bottom:14px">${oldCodes().length} monture${oldCodes().length>1?'s ont':' a'} encore un ancien code étiquette tout en chiffres (ex. ${esc(oldCodes()[0].etiquette)}).<span>Les nouvelles montures reçoivent un code « 3 lettres de la marque + 3 chiffres ». <button class="link" data-act="etq-renum">Passer les anciennes au nouveau format</button></span></div>`:''}
+  <div class="table-wrap"><table><thead><tr><th>Marque</th><th>Préfixe</th><th>Fournisseur</th><th class="num">Références</th><th class="num">En stock</th><th>Coefficient</th><th>Exemple</th><th></th></tr></thead><tbody>
   ${list.map(b=>{const ms=S.montures.filter(m=>m.marque===b.nom),c=coefOf(b.nom),f=fourOf(b.fournisseurId);
     const cat=S.catalogue.filter(x=>x.marque===b.nom&&!ms.some(m=>normEAN(m.ean)===normEAN(x.ean))).length;
     const pa=ms.length?ms.reduce((t,m)=>t+(m.pa||0),0)/ms.length:(S.catalogue.find(x=>x.marque===b.nom)||{}).pa||0;
     return`<tr><td><b>${esc(b.nom)}</b>${ms.some(m=>m.pvManuel)?`<span class="sub">${ms.filter(m=>m.pvManuel).length} prix fixé${ms.filter(m=>m.pvManuel).length>1?'s':''} à la main</span>`:''}</td>
-    <td>${f?esc(f.nom):'<span class="warn-txt">Non rattachée</span>'}</td>
+    <td class="mono">${esc(prefixOf(b.nom))}</td><td>${f?esc(f.nom):'<span class="warn-txt">Non rattachée</span>'}</td>
     <td class="num">${ms.length+cat}</td><td class="num">${ms.reduce((t,m)=>t+Math.max(0,m.qte),0)}</td>
     <td><span class="suffix coef"><input type="number" min="0" step="0.05" id="coef-${b.id}" data-coef="${b.id}" value="${c||''}" placeholder="non défini" aria-label="Coefficient ${esc(b.nom)}"><span>×</span></span></td>
     <td class="sub-cell">${c&&pa?`${money(pa)} → <b style="color:var(--ink)">${money(pvFrom(pa,c))}</b>`:'—'}</td>
@@ -649,19 +672,24 @@ function marqueForm(b,presetFour){
   openModal(isNew?'Nouvelle marque':b.nom,isNew?'':`${nbm} monture${nbm>1?'s':''} en stock ou en fiche`,`
   <fieldset><label class="full">Nom de la marque <span class="req">*</span><input id="b-nom" value="${esc(b.nom)}"></label>
     <label>Fournisseur<select id="b-four">${fourOptions(b.fournisseurId,true)}</select></label>
-    <label>Coefficient<span class="suffix"><input id="b-coef" type="number" min="0" step="0.05" value="${b.coef||''}" placeholder="ex. 2,2"><span>× achat</span></span></label></fieldset>`,
+    <label>Coefficient<span class="suffix"><input id="b-coef" type="number" min="0" step="0.05" value="${b.coef||''}" placeholder="ex. 2,2"><span>× achat</span></span></label>
+    <label>Préfixe des codes étiquette<input id="b-pre" maxlength="3" autocapitalize="characters" spellcheck="false" style="text-transform:uppercase" value="${esc(b.prefixe||'')}" placeholder="${esc(autoPrefix(b.nom)||'ABC')}"><span class="hint" id="b-pre-h">Nouvelles montures : <b class="mono">${esc((b.prefixe||autoPrefix(b.nom)))}001</b>, ${esc((b.prefixe||autoPrefix(b.nom)))}002… Laissez vide pour les 3 premières lettres du nom.</span></label></fieldset>`,
   `${isNew?'':`<button class="btn danger" data-act="b-del" data-id="${b.id}" style="margin-right:auto">Supprimer</button>`}<button class="btn" data-act="close">Annuler</button><button class="btn primary" id="b-ok">Enregistrer</button>`,()=>{
     $('#b-nom').focus();
+    const preH=()=>{const P=cleanPrefix($('#b-pre').value)||autoPrefix($('#b-nom').value);$('#b-pre').placeholder=autoPrefix($('#b-nom').value);$('#b-pre-h').innerHTML=`Nouvelles montures : <b class="mono">${esc(P)}001</b>, ${esc(P)}002… Laissez vide pour les 3 premières lettres du nom.`};
+    $('#b-nom').addEventListener('input',preH);$('#b-pre').addEventListener('input',preH);
     $('#b-four').addEventListener('change',e=>{if(e.target.value==='__new'){const keep={nom:$('#b-nom').value,coef:$('#b-coef').value,id:b.id};
       fournisseurForm(null,f=>{marqueForm(isNew?null:mq(keep.id),f.id);$('#b-nom').value=keep.nom;$('#b-coef').value=keep.coef})}});
     $('#b-ok').onclick=()=>{
       const nom=$('#b-nom').value.trim(),fid=$('#b-four').value==='__new'?'':$('#b-four').value,coef=+String($('#b-coef').value).replace(',','.')||0;
       if(!nom){toast('Indiquez le nom de la marque.');return}
+      const preIn=cleanPrefix($('#b-pre').value);if($('#b-pre').value.trim()&&preIn.length!==3){toast('Le préfixe doit faire 3 lettres.');return}
+      const prefixe=preIn&&preIn!==autoPrefix(nom)?preIn:'';
       const dup=marqueOf(nom);if(dup&&dup.id!==b.id){toast('Cette marque existe déjà.');return}
-      if(isNew)S.marques.push({id:'b'+Date.now().toString(36),nom,fournisseurId:fid,coef:coef>0?r2(coef):0});
+      if(isNew)S.marques.push({id:'b'+Date.now().toString(36),nom,fournisseurId:fid,coef:coef>0?r2(coef):0,...(prefixe?{prefixe}:{})});
       else{const x=mq(b.id),old=x.nom;
         if(old!==nom){S.montures.forEach(m=>{if(m.marque===old)m.marque=nom});S.catalogue.forEach(c=>{if(c.marque===old)c.marque=nom})}
-        Object.assign(x,{nom,fournisseurId:fid,coef:coef>0?r2(coef):0})}
+        Object.assign(x,{nom,fournisseurId:fid,coef:coef>0?r2(coef):0});if(prefixe)x.prefixe=prefixe;else delete x.prefixe}
       let n=0;S.montures.forEach(m=>{if(m.marque===nom&&coef>0&&!m.pvManuel){applyCoef(m);n++}});
       S.catalogue.forEach(c=>{if(c.marque===nom&&coef>0&&c.pa)c.pv=pvFrom(c.pa,coef)});
       save();closeModal();render();toast(isNew?`Marque ${nom} créée`:`Marque ${nom} mise à jour${n?`, ${n} prix recalculé${n>1?'s':''}`:''}`);
@@ -710,16 +738,16 @@ function fournisseurForm(f,onSaved){
 
 /* ---------- Import de catalogue ---------- */
 const CAT_FIELDS=[
-  ['ean','Code EAN',true,/(^|\b)(ean|gtin|upc|code.?barre|barcode|bar.?code|ean13)/],
-  ['marque','Marque',false,/(marque|brand|collection)/],
-  ['modele','Modèle / référence',true,/(modele|model|reference|^ref|ref\b|article|style|designation|description|nom)/],
+  ['ean','Code EAN',true,/(^|\b|_)(ean|gtin|upc|code.?barre|barcode|bar.?code|ean13)/],
+  ['marque','Marque',false,/(marque|brand|collection|fabricant|manufacturer)/],
+  ['modele','Modèle / référence',true,/(modele|model|reference|^ref|ref\b|article|style|designation|description|nom|libelle)/],
   ['coloris','Coloris',false,/(colou?r|coloris|couleur|teinte|col\b|col\.)/],
-  ['calibre','Calibre',false,/(calibre|eye|lens.?width|caliber|taille.?verre|^a$)/],
+  ['calibre','Calibre',false,/(calibre|eye|lens.?width|caliber|taille.?verre|boxing.?a|(^|\W)a$)/],
   ['pont','Pont',false,/(pont|bridge|dbl)/],
-  ['branche','Branche',false,/(branche|temple|arm)/],
+  ['branche','Branche',false,/(branche|temple|arm\b|arm_|length)/],
   ['taille','Taille complète (52-18-140)',false,/(taille|size|dimension)/],
-  ['pa','Prix d\'achat HT',false,/(achat|wholesale|whs|cost|prix.?net|net.?price|purchase|gros|tarif|pa\b)/],
-  ['pv','Prix de vente HT (sans coefficient)',false,/(vente|retail|pvc|rrp|msrp|public|selling|pv\b)/]
+  ['pa','Prix d\'achat HT',false,/(achat|wholesale|whs|cost|prix.?net|net.?price|purchase|gros|tarif|pa\b|ppht|buy)/],
+  ['pv','Prix de vente HT (sans coefficient)',false,/(vente|retail|pvc|rrp|msrp|public|selling|pv\b|consumer|sale)/]
 ];
 let imp=null;
 const normH=h=>String(h||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').trim();
@@ -729,10 +757,10 @@ function viewCatalogue(){
   const byM={};S.catalogue.forEach(c=>{byM[c.marque]=byM[c.marque]||{n:0,date:c.importe};byM[c.marque].n++;if(c.importe>byM[c.marque].date)byM[c.marque].date=c.importe});
   const list=Object.entries(byM).sort((a,b)=>a[0].localeCompare(b[0],'fr'));
   return`<a class="back" href="#stock">← Stock</a>
-  <div class="head"><div><h1>Importer un catalogue</h1><p>Le fichier d'une marque (Excel ou CSV) avec les codes EAN. À la réception, chaque pochette scannée remplira sa fiche toute seule.</p></div></div>
+  <div class="head"><div><h1>Importer un catalogue</h1><p>Le fichier d'une marque (OPTO11 en XML, Excel ou CSV) avec les codes EAN. À la réception, chaque pochette scannée remplira sa fiche toute seule.</p></div></div>
   <section class="panel">
-    <label class="drop" id="drop" for="imp-file"><span class="drop-ico">${ICO_IMPORT}</span><b>Choisir le fichier du catalogue</b><span>ou le glisser ici · .xlsx, .xls ou .csv</span>
-      <input id="imp-file" type="file" accept=".xlsx,.xls,.csv,.txt" hidden></label>
+    <label class="drop" id="drop" for="imp-file"><span class="drop-ico">${ICO_IMPORT}</span><b>Choisir le fichier du catalogue</b><span>ou le glisser ici · .xml (OPTO11), .xlsx, .xls ou .csv</span>
+      <input id="imp-file" type="file" accept=".xml,.xlsx,.xls,.csv,.txt" hidden></label>
     <div id="imp-area"></div>
   </section>
   <section class="panel"><h3>Catalogues importés</h3>
@@ -755,6 +783,13 @@ function readCatalogue(file){
   fr.onload=()=>{
     try{
       let rows;
+      const head=new TextDecoder('latin1').decode(new Uint8Array(fr.result).slice(0,400));
+      if(/\.xml$/i.test(file.name)||/^\s*(\uFEFF)?\s*<(\?xml|[A-Za-z])/.test(head)){
+        const enc=(head.match(/encoding=["']([\w-]+)["']/i)||[])[1]||'utf-8';let txt;try{txt=new TextDecoder(enc).decode(fr.result)}catch(e){txt=new TextDecoder().decode(fr.result)}
+        const x=xmlRows(txt);
+        if(!x){area.innerHTML='<p class="warn-txt">Ce fichier XML ne contient aucun code EAN reconnaissable. Envoyez-le à l\'assistance pour l\'adapter.</p>';return}
+        prepareImport(file.name,x.rows,x.info);return;
+      }
       if(window.XLSX){const wb=XLSX.read(new Uint8Array(fr.result),{type:'array'});
         const best=wb.SheetNames.map(n=>XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:true,defval:''})).sort((a,b)=>b.length-a.length)[0];rows=best}
       else{const txt=new TextDecoder().decode(fr.result);const sep=(txt.split('\n')[0].match(/;/g)||[]).length>(txt.split('\n')[0].match(/,/g)||[]).length?';':',';
@@ -764,16 +799,57 @@ function readCatalogue(file){
   };
   fr.readAsArrayBuffer(file);
 }
-function prepareImport(name,rows){
+/* Catalogue XML (norme OPTO11 d'EDI-Optique ou autre) : chaque article porteur d'un code EAN/GTIN devient une ligne.
+   Les informations des éléments parents (marque, modèle…) sont recopiées sur chaque article. */
+function xmlRows(txt){
+  const xd=new DOMParser().parseFromString(txt,'application/xml');
+  if(xd.getElementsByTagName('parsererror').length)throw new Error('xml');
+  const name=el=>el.localName||el.nodeName;
+  const leafs=el=>[...el.children].length===0;
+  const val=el=>(el.textContent||'').trim();
+  const GT=/^\d{8,14}$/;
+  const all=[...xd.getElementsByTagName('*')];
+  const gtinLeaf=all.filter(el=>(leafs(el)&&GT.test(val(el))&&/(ean|gtin|upc|barre|barcode)/i.test(name(el)))||[...el.attributes].some(a=>/(ean|gtin|upc)/i.test(a.name)&&GT.test(a.value.trim())));
+  const src=gtinLeaf.length?gtinLeaf:all.filter(el=>leafs(el)&&/^\d{12,14}$/.test(val(el)));
+  if(!src.length)return null;
+  /* Élément « article » : le plus proche ancêtre répété parmi ses frères */
+  const votes=new Map();
+  src.forEach(el=>{let a=[...el.attributes].some(x=>/(ean|gtin|upc)/i.test(x.name))&&!leafs(el)?el:el.parentElement;let pick=null;
+    for(let b=a;b&&b.parentElement;b=b.parentElement){const sib=[...b.parentElement.children].filter(x=>name(x)===name(b));if(sib.length>1){pick=b;break}}
+    pick=pick||a;if(pick){const k=name(pick);votes.set(k,(votes.get(k)||0)+1)}});
+  const tag=[...votes.entries()].sort((a,b)=>b[1]-a[1])[0][0];
+  const recs=all.filter(el=>name(el)===tag&&src.some(g=>el===g||el.contains(g)));
+  const key=(el,base)=>{const at=[...el.attributes].filter(a=>!/^xmlns/.test(a.name)&&a.value.length<30&&!/^\d+([.,]\d+)?$/.test(a.value)).map(a=>a.value);return(base?base+'/':'')+name(el)+(at.length?'['+at.join(',')+']':'')};
+  const flat=(el,base,o)=>{
+    [...el.attributes].forEach(a=>{if(!/^xmlns/.test(a.name))o[(base?base:name(el))+'@'+a.name]=a.value.trim()});
+    [...el.children].forEach(c=>{if(leafs(c)){let k=key(c,base);let n=2;while(k in o)k=key(c,base)+' #'+(n++);o[k]=val(c);[...c.attributes].forEach(a=>{if(!/^xmlns/.test(a.name)&&/^\d+([.,]\d+)?$|^\d{8,14}$/.test(a.value.trim()))o[k+'@'+a.name]=a.value.trim()})}
+      else if(name(c)!==tag&&!src.some(g=>c!==g&&c.contains(g)&&name(c)===tag))flat(c,(base?base+'/':'')+name(c),o)});
+    return o;
+  };
+  const rows=recs.map(r=>{const o={};
+    /* champs simples des ancêtres (marque, modèle, collection…) */
+    const anc=[];for(let a=r.parentElement;a&&a.parentElement;a=a.parentElement)anc.unshift(a);
+    anc.forEach(a=>{[...a.attributes].forEach(x=>{if(!/^xmlns/.test(x.name))o[name(a)+'@'+x.name]=x.value.trim()});[...a.children].filter(leafs).forEach(c=>{o[name(a)+'/'+key(c,'')]=val(c)})});
+    flat(r,'',o);return o});
+  const cols=[];rows.forEach(o=>Object.keys(o).forEach(k=>{if(!cols.includes(k))cols.push(k)}));
+  const used=cols.filter(k=>rows.some(o=>o[k]!==''&&o[k]!=null));
+  return{rows:[used,...rows.map(o=>used.map(k=>o[k]??''))],info:`XML · élément article « ${tag} »`};
+}
+function prepareImport(name,rows,info){
   rows=rows.filter(r=>r.some(c=>String(c).trim()!==''));
-  let hi=0;for(let i=0;i<Math.min(20,rows.length);i++){if(rows[i].filter(c=>typeof c==='string'&&c.trim()&&isNaN(+c)).length>=3){hi=i;break}}
+  let hi=0;if(!info)for(let i=0;i<Math.min(20,rows.length);i++){if(rows[i].filter(c=>typeof c==='string'&&c.trim()&&isNaN(+c)).length>=3){hi=i;break}}
   const headers=(rows[hi]||[]).map((h,i)=>String(h).trim()||`Colonne ${i+1}`);
   const data=rows.slice(hi+1);
   const map={},used=new Set();
-  CAT_FIELDS.forEach(([k,,,re])=>{const i=headers.findIndex((h,j)=>!used.has(j)&&re.test(normH(h)));if(i>=0){map[k]=i;used.add(i)}});
+  /* Pour la marque, le modèle et le coloris, on préfère une colonne « libellé » à une colonne « code » */
+  const LBL=/(name|nom|libelle|label|desc|lib\b)/,CODE=/(code|id\b|_id|cod\b)/;
+  CAT_FIELDS.forEach(([k,,,re])=>{let cand=headers.map((h,j)=>j).filter(j=>!used.has(j)&&re.test(normH(headers[j])));
+    if(['marque','modele','coloris'].includes(k)&&cand.length>1){const lb=cand.filter(j=>LBL.test(normH(headers[j]))&&!CODE.test(normH(headers[j])));if(lb.length)cand=lb;else{const nc=cand.filter(j=>!CODE.test(normH(headers[j])));if(nc.length)cand=nc}}
+    if(k==='ean'&&cand.length>1){const g=cand.filter(j=>data.slice(0,30).some(r=>/^\d{8,14}$/.test(cellEAN(r[j]))));if(g.length)cand=g}
+    const i=cand.length?cand[0]:-1;if(i>=0){map[k]=i;used.add(i)}});
   if(map.ean==null){const i=headers.findIndex((h,j)=>!used.has(j)&&data.slice(0,30).filter(r=>/^\d{12,14}$/.test(cellEAN(r[j]))).length>=Math.min(5,data.length));if(i>=0)map.ean=i}
   const guessBrand=(name.match(/oz/i)?'OZ':'');
-  imp={name,headers,data,map,marque:guessBrand,coef:''};
+  imp={name,headers,data,map,marque:guessBrand,coef:'',info:info||''};
   drawImport();
 }
 function mappedRows(){
@@ -793,7 +869,7 @@ function drawImport(){
   const area=$('#imp-area');if(!area||!imp)return;
   const rows=mappedRows(),ok=rows.filter(r=>normEAN(r.ean).length>=8&&r.modele&&r.marque),exist=ok.filter(r=>catByEAN(r.ean)).length;
   const sel=k=>`<select data-map="${k}" id="map-${k}"><option value="">— Aucune —</option>${imp.headers.map((h,i)=>`<option value="${i}" ${imp.map[k]===i?'selected':''}>${esc(h)}</option>`).join('')}</select>`;
-  area.innerHTML=`<div class="imp-file"><b>${esc(imp.name)}</b> · ${imp.data.length} ligne${imp.data.length>1?'s':''} lue${imp.data.length>1?'s':''}</div>
+  area.innerHTML=`<div class="imp-file"><b>${esc(imp.name)}</b> · ${imp.data.length} ${imp.info?'article':'ligne'}${imp.data.length>1?'s':''} lu${imp.info?'':'e'}${imp.data.length>1?'s':''}${imp.info?` · <span class="muted">${esc(imp.info)}</span>`:''}</div>
   <h3 style="margin-top:6px">Correspondance des colonnes</h3>
   <p class="hint" style="margin:0 0 10px">Prismea a reconnu les colonnes qu'il pouvait. Corrigez-les si besoin.</p>
   <div class="map-grid">${CAT_FIELDS.map(([k,l,req])=>`<label>${l}${req?' <span class="req">*</span>':''}${sel(k)}</label>`).join('')}
@@ -830,6 +906,10 @@ document.addEventListener('click',e=>{
   const setRq=(v,rel)=>{const l=rec.lignes.find(x=>x.montureId===id);if(!l)return;const q=rel?l.qte+v:v;if(q<=0)rec.lignes=rec.lignes.filter(x=>x!==l);else l.qte=q;drawRec()};
   switch(b.dataset.act){
     case's-tab':stockTab=b.dataset.k;render();break;
+    case'etq-renum':{const n=oldCodes().length,ex=oldCodes()[0];
+      openModal('Nouveaux codes étiquette',`${n} monture${n>1?'s':''} concernée${n>1?'s':''}`,`<p>Chaque ancienne monture recevra un code « 3 lettres de la marque + 3 chiffres », par exemple <b class="mono">${esc(ex.etiquette)}</b> → <b class="mono">${esc(prefixOf(ex.marque))}…</b>.</p><p>Les ventes, devis et entrées de stock passés afficheront le nouveau code. <b>Pensez à réimprimer les étiquettes</b> déjà collées sur les montures en stock : les anciens codes ne seront plus reconnus au scan (le code-barres EAN reste valable).</p>`,
+        `<button class="btn" data-act="close">Annuler</button><button class="btn primary" id="renum-ok">Changer les codes</button>`,()=>{$('#renum-ok').onclick=async e2=>{e2.target.disabled=true;try{const k=await renumberOld();closeModal();render();toast(`${k} code${k>1?'s':''} étiquette mis à jour`)}catch(x){e2.target.disabled=false;toast('Connexion perdue : réessayez.')}}});
+      break}
     case's-new':montureForm();break;
     case's-del':
       if(!b.dataset.sure){b.dataset.sure='1';b.textContent='Confirmer la suppression';break}
@@ -1093,9 +1173,9 @@ function venteDetail(id,tab){
   let body='';
   if(vdTab==='facture')body=`<div class="ticket-meta"><span>Échéance <b>${dF.format(new Date(v.echeance))}</b></span>${statutPill(v)}</div>
   <div class="table-wrap"><table><thead><tr><th>Monture</th><th class="num">Qté</th><th class="num">PU HT</th><th class="num">Montant HT</th></tr></thead><tbody>
-  ${v.lignes.map(l=>`<tr><td><b>${esc(l.designation)}</b><span class="sub"><span class="mono">${esc(l.etiquette)}</span>${l.detail?' · '+esc(l.detail):''}</span></td><td class="num">${l.qte}</td><td class="num">${money(l.pu)}</td><td class="num">${money(l.qte*l.pu)}</td></tr>`).join('')}
+  ${v.lignes.map(l=>`<tr><td><b>${esc(l.designation)}</b><span class="sub"><span class="mono">${esc(l.etiquette)}</span>${l.detail?' · '+esc(l.detail):''}</span></td><td class="num">${l.qte}</td><td class="num">${puCell(l)}</td><td class="num">${money(lineHT(l))}</td></tr>`).join('')}
   </tbody></table></div>
-  <dl class="totals" style="max-width:320px;margin-left:auto">${v.rem?`<dt>Remise ${nf.format(v.remise)} %</dt><dd>−${money(v.rem)}</dd>`:''}${taxLines(v,regOf(v),v.tvaIntra)}</dl>`;
+  <dl class="totals" style="max-width:320px;margin-left:auto">${remTotals(v)}${taxLines(v,regOf(v),v.tvaIntra)}</dl>`;
   else if(vdTab==='reglements')body=`${regs.length?`<div class="docs">${regs.map(r=>`<div class="doc-row static"><span><b>${money(r.montant)}</b><span class="sub">${dF.format(new Date(r.date))} · ${esc(r.mode)}${regInfo(r)?' · '+esc(regInfo(r)):''}</span>${r.justifBanque?`<span class="sub" style="color:var(--ok)">Justifié à la banque le ${dF.format(new Date(r.justifBanque.le))}</span>`:''}</span><span class="row-btns">${/Virement/.test(r.mode)?`<button class="btn small" data-act="bk-open" data-id="${v.id}" data-rid="${r.id}">${r.justifBanque?'Renvoyer à la banque':'Justifier à la banque'}</button>`:''}${closedWeek(r.date)?'<span class="hint">Semaine clôturée</span>':`<button class="link danger-link" data-act="k-regdel" data-id="${r.id}">Supprimer</button>`}</span></div>`).join('')}</div>`:'<p class="muted">Aucun règlement pour cette facture.</p>'}
   <dl class="totals" style="max-width:320px;margin-left:auto"><dt>Total facturé</dt><dd>${money(v.ttc)}</dd><dt>Réglé</dt><dd>${money(paidOf(v))}</dd><dt class="big">Reste à payer</dt><dd class="big">${money(resteOf(v))}</dd></dl>`;
   else if(vdTab==='documents')body=attBlock(v)+`${assetsNS?`<label class="drop small" id="vd-drop" for="vd-file"><b>Ajouter des documents</b><span>Bordereau DHL, facture, photo… · PDF ou image, 20 Mo maximum</span>
@@ -1269,14 +1349,20 @@ function invoicePDF(v){
   const cl=[...(c.adresse||'').split('\n'),[c.ville,p?p[1]:''].filter(Boolean).join(', '),c.tvaIntra?'N° TVA '+c.tvaIntra:'',c.nif?'NIF '+c.nif:''].filter(Boolean).slice(0,4);
   cl.forEach((t,i)=>pdf.text(txt(t),114,y+17+i*4.2));
   y+=44;
-  const body=v.lignes.map(l=>[txt(l.etiquette),txt(l.designation+(l.detail?' - '+l.detail:'')),String(l.qte),eur(l.pu),eur(l.qte*l.pu)]);
+  const hasRem=v.lignes.some(l=>remL(l));
+  const body=v.lignes.map(l=>{const r=[txt(l.etiquette),txt(l.designation+(l.detail?' - '+l.detail:'')),String(l.qte),eur(l.pu)];if(hasRem)r.push(remL(l)?'-'+txt(nf2.format(remL(l)).replace(/,00$/,''))+' %':'');r.push(eur(lineHT(l)));return r});
   if(pdf.autoTable){
-    pdf.autoTable({startY:y,head:[['Réf.','Désignation','Qté','PU HT','Montant HT']],body,margin:{left:L,right:16},
+    const head=['Réf.','Désignation','Qté','PU HT'];if(hasRem)head.push('Remise');head.push('Montant HT');
+    const cs={0:{cellWidth:20},2:{halign:'right',cellWidth:12},3:{halign:'right',cellWidth:24}};
+    if(hasRem){cs[4]={halign:'right',cellWidth:18};cs[5]={halign:'right',cellWidth:28}}else cs[4]={halign:'right',cellWidth:30};
+    pdf.autoTable({startY:y,head:[head],body,margin:{left:L,right:16},
       styles:{font:'helvetica',fontSize:8.8,cellPadding:2.2},headStyles:{fillColor:[10,102,112],textColor:255},
-      columnStyles:{0:{cellWidth:20},2:{halign:'right',cellWidth:14},3:{halign:'right',cellWidth:26},4:{halign:'right',cellWidth:30}}});
+      columnStyles:cs});
     y=pdf.lastAutoTable.finalY+6;
   }else{body.forEach(r=>{pdf.text(r.join('   '),L,y);y+=5});y+=4}
-  const tot=[];if(v.rem)tot.push(['Total brut HT',eur(v.brut)],['Remise '+txt(nf.format(v.remise))+' %','-'+eur(v.rem)]);
+  const tot=[];if(v.rem||v.remLignes)tot.push(['Total brut HT',eur(v.brut)]);
+  if(v.remLignes)tot.push(['Remises sur montures','-'+eur(v.remLignes)]);
+  if(v.rem)tot.push(['Remise client '+txt(nf.format(v.remise))+' %','-'+eur(v.rem)]);
   tot.push(['Total HT',eur(v.ht)]);
   if(reg==='fr')tot.push(['TVA 20 %',eur(v.tva)],['Total TTC',eur(v.ttc)]);else tot.push(['TVA','Non applicable']);
   const paid=paidOf(v);if(paid>0)tot.push(['Déjà réglé','-'+eur(paid)]);
@@ -1419,7 +1505,7 @@ const paOf=l=>l.pa!=null?l.pa:((mon(l.montureId)||{}).pa||0);
 /* Chiffres d'une liste de ventes : CA HT (remise déduite), marge brute, montures vendues */
 function aggr(vs){
   let ca=0,marge=0,qte=0;
-  vs.forEach(v=>{const f=v.brut?v.ht/v.brut:1;ca+=v.ht;v.lignes.forEach(l=>{qte+=l.qte;marge+=l.qte*(l.pu*f-paOf(l))})});
+  vs.forEach(v=>{const n=v.lignes.reduce((t,l)=>t+lineHT(l),0),f=n?v.ht/n:1;ca+=v.ht;v.lignes.forEach(l=>{qte+=l.qte;marge+=l.qte*(puNet(l)*f-paOf(l))})});
   return{ca:r2(ca),marge:r2(marge),qte,n:vs.length};
 }
 function delta(cur,prev){
@@ -1470,9 +1556,9 @@ function viewStats(){
   const topC=Object.entries(byC).sort((a,b)=>b[1].ca-a[1].ca).slice(0,8).map(([id,o])=>{const c=cli(id);return{bar:o.ca,cells:[`<a class="plain" href="#client-${id}">${esc(c?c.nom:'Client supprimé')}</a>`,o.n,money(o.ca),A.ca?Math.round(o.ca/A.ca*100)+' %':'—']}});
   // marques et modèles
   const byB={},byM={};
-  vs.forEach(v=>{const f=v.brut?v.ht/v.brut:1;v.lignes.forEach(l=>{const m=mon(l.montureId),b=m?m.marque:(l.designation||'').split(' ')[0]||'Autre';
-    const ob=byB[b]=byB[b]||{ca:0,qte:0,marge:0};ob.ca+=l.qte*l.pu*f;ob.qte+=l.qte;ob.marge+=l.qte*(l.pu*f-paOf(l));
-    const om=byM[l.montureId]=byM[l.montureId]||{nom:l.designation,detail:l.detail,qte:0,ca:0};om.qte+=l.qte;om.ca+=l.qte*l.pu*f})});
+  vs.forEach(v=>{const n=v.lignes.reduce((t,l)=>t+lineHT(l),0),f=n?v.ht/n:1;v.lignes.forEach(l=>{const m=mon(l.montureId),b=m?m.marque:(l.designation||'').split(' ')[0]||'Autre';
+    const ob=byB[b]=byB[b]||{ca:0,qte:0,marge:0};ob.ca+=lineHT(l)*f;ob.qte+=l.qte;ob.marge+=l.qte*(puNet(l)*f-paOf(l));
+    const om=byM[l.montureId]=byM[l.montureId]||{nom:l.designation,detail:l.detail,qte:0,ca:0};om.qte+=l.qte;om.ca+=lineHT(l)*f})});
   const topB=Object.entries(byB).sort((a,b)=>b[1].ca-a[1].ca).slice(0,8).map(([b,o])=>({bar:o.ca,cells:[esc(b),nf.format(o.qte),money(o.ca),o.ca?Math.round(o.marge/o.ca*100)+' %':'—']}));
   const topM=Object.values(byM).sort((a,b)=>b.qte-a.qte||b.ca-a.ca).slice(0,8).map(o=>({bar:o.qte,cells:[`${esc(o.nom)}<span class="sub">${esc(o.detail||'')}</span>`,nf.format(o.qte),money(o.ca)]}));
   // géographie
@@ -2173,6 +2259,7 @@ document.addEventListener('change',e=>{
   const t=e.target;
   if(t.id==='fp')fillRows();
   else if(t.dataset.dq){setDq(t.dataset.dq,Math.max(0,Math.round(+t.value||0)))}
+  else if(t.dataset.drem&&doc){const l=doc.lignes.find(x=>x.montureId===t.dataset.drem);if(l){const v=Math.min(100,Math.max(0,Math.round((+String(t.value).replace(',','.')||0)*100)/100));if(v)l.rem=v;else delete l.rem;drawDoc()}}
   else if(t.id==='d-rem'){doc.remise=Math.min(100,Math.max(0,+t.value||0));drawDoc()}
   else if(t.id==='d-pay'){doc.paiement=t.value;drawDoc()}
   else if(t.id==='d-banque'&&doc)doc.banque=t.value.trim();
@@ -2182,6 +2269,7 @@ document.addEventListener('change',e=>{
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape'&&!$('#modal').hidden)closeModal();
   if(e.key==='Enter'&&e.target.id==='scan'){e.preventDefault();scanAdd()}
+  if(e.key==='Enter'&&e.target.dataset&&e.target.dataset.drem){e.preventDefault();e.target.blur();const sc=$('#scan');if(sc)sc.focus()}
   if(e.key==='Enter'&&e.target.matches('tr.click'))location.hash='client-'+e.target.dataset.id;
 });
 $('#modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal()});

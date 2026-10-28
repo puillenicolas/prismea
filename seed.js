@@ -21,7 +21,12 @@ function buildState() {
 
   const marques = [
     ['OZ', 'f1', 2.2], ['OZ Kids', 'f1', 2.4], ['Lumea', 'f2', 2], ['Okoumé', 'f2', 2.1], ['Kombé', 'f3', 1.8],
-  ].map((b, i) => ({ id: 'b' + (i + 1), nom: b[0], fournisseurId: b[1], coef: b[2] }));
+  ].map((b, i) => ({ id: 'b' + (i + 1), nom: b[0], fournisseurId: b[1], coef: b[2], ...(b[0] === 'OZ' ? { prefixe: 'OZE' } : {}) }));
+  /* Code étiquette : 3 lettres de la marque + numéro sur 3 chiffres (OZE001, LUM002…) */
+  const autoPrefix = n => (String(n).normalize('NFD').replace(/[^A-Za-z]/g, '').toUpperCase() + 'XXX').slice(0, 3);
+  const prefixOf = n => { const b = marques.find(x => x.nom === n); return (b && b.prefixe) || autoPrefix(n); };
+  const seqMeta = {};
+  const nextEtq = n => { const P = prefixOf(n); seqMeta['seqM_' + P] = (seqMeta['seqM_' + P] || 0) + 1; return P + pad(seqMeta['seqM_' + P], 3); };
   const coef = n => marques.find(b => b.nom === n).coef;
 
   const modeles = [
@@ -34,7 +39,7 @@ function buildState() {
   ];
   const montures = modeles.map((m, i) => {
     const pa = m[6];
-    return { id: 'm' + (i + 1), etiquette: pad(i + 1, 6), ean: '80' + pad(51234567000 + i * 7, 11), marque: m[0], modele: m[1], coloris: m[2],
+    return { id: 'm' + (i + 1), etiquette: nextEtq(m[0]), ean: '80' + pad(51234567000 + i * 7, 11), marque: m[0], modele: m[1], coloris: m[2],
       calibre: String(m[3]), pont: String(m[4]), branche: String(m[5]), pa, pv: Math.round(pa * coef(m[0])), seuil: 3, qte: 0 };
   });
   const catalogue = montures.map(m => ({ id: 'e' + m.ean.replace(/^0+/, ''), ean: m.ean, marque: m.marque, modele: m.modele, coloris: m.coloris,
@@ -131,7 +136,7 @@ function buildState() {
 
   return {
     clients, montures, ventes, devis, receptions, reglements, clotures: [], catalogue, marques, fournisseurs, facturesF,
-    meta: { devise: 'EUR', societe, seq: clients.length, seqV, seqFA, seqD, seqR, seqM: montures.length, seqF: fournisseurs.length },
+    meta: { devise: 'EUR', societe, seq: clients.length, seqV, seqFA, seqD, seqR, ...seqMeta, seqF: fournisseurs.length },
   };
 }
 

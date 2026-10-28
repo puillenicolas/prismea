@@ -171,7 +171,8 @@ app.post('/api/sync', json, needAuth, wrap(async (req, res) => {
 /* Numérotation attribuée par le serveur (factures, ventes, étiquettes…) : jamais deux fois le même numéro */
 app.post('/api/seq/:name', json, needAuth, wrap(async (req, res) => {
   const name = req.params.name;
-  const metaKey = SEQ_NAMES[name];
+  /* Codes étiquette : un compteur par préfixe de marque (M_OZE, M_LUM…) */
+  const metaKey = SEQ_NAMES[name] || (/^M_[A-Z]{3}$/.test(name) ? 'seq' + name : null);
   if (!metaKey) return res.status(400).json({ error: 'compteur_inconnu' });
   const floor = Math.max(0, Math.floor(+req.body.min || 0));
   const client = await pool.connect();
