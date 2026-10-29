@@ -393,3 +393,8 @@ td s.muted{font-size:12px}
 .photo-acts .btn.small{padding:8px 12px;font-size:13px}
 .photo-big{display:block;width:100%;max-height:70vh;object-fit:contain;background:#fff;border-radius:10px}
 .with-thumb>div{min-width:150px}
+
+/* Connexion DIOPTRA */
+.dio-box{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;margin-top:16px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2)}
+.dio-txt{display:flex;flex-direction:column;gap:3px;min-width:0;font-size:14px}
+.dio-ok{font-weight:600;color:var(--ok)}

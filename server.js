@@ -8,6 +8,7 @@ const PgStore = require('connect-pg-simple')(session);
 const bcrypt = require('bcryptjs');
 const { pool, migrate } = require('./db');
 const dhl = require('./dhl');
+const dioptra = require('./dioptra');
 const { seed } = require('./seed');
 
 const PORT = process.env.PORT || 3000;
@@ -147,6 +148,12 @@ app.post('/api/sync', json, needAuth, wrap(async (req, res) => {
       } else if (kind === 'ventes') {
         /* le suivi DHL est écrit par le serveur : on ne laisse pas une ancienne copie l'écraser */
         const cur = await client.query("select data from entities where kind='ventes' and id=$1", [id]);
+        /* idem pour l'état d'envoi à DIOPTRA */
+        const srvD = cur.rows[0] && cur.rows[0].data.dioptra;
+        if (srvD && (!data.dioptra || JSON.stringify(data.dioptra) !== JSON.stringify(srvD))) {
+          const t = d => (d && ((d.erreur && d.erreur.le) > (d.le || '') ? d.erreur.le : d.le)) || '';
+          if (!data.dioptra || t(data.dioptra) < t(srvD)) data = { ...data, dioptra: srvD };
+        }
         const srv = cur.rows[0] && cur.rows[0].data.expedition && cur.rows[0].data.expedition.dhl;
         if (srv && data.expedition && (!data.expedition.dhl || (data.expedition.dhl.checkedAt || '') < (srv.checkedAt || ''))) {
           data = { ...data, expedition: { ...data.expedition, dhl: srv } };
@@ -255,6 +262,17 @@ app.get('/api/files/:id', needAuth, wrap(async (req, res) => {
 app.delete('/api/files/:id', needAuth, wrap(async (req, res) => {
   await pool.query('delete from files where id=$1', [req.params.id]);
   res.json({ ok: true });
+}));
+
+/* ---------- Connexion DIOPTRA (la clé ne quitte jamais le serveur) ---------- */
+app.get('/api/dioptra/config', needAuth, wrap(async (req, res) => res.json(await dioptra.publicConfig())));
+app.post('/api/dioptra/config', json, needAuth, wrap(async (req, res) => {
+  try { res.json(await dioptra.saveConfig(req.body || {}, req.session.user.id)); }
+  catch (e) { if (e.code) return res.status(400).json({ error: e.code }); throw e; }
+}));
+app.post('/api/dioptra/send/:venteId', json, needAuth, wrap(async (req, res) => {
+  const r = await dioptra.send(String(req.params.venteId), { force: !!(req.body && req.body.force), user: req.session.user });
+  res.status(r.status).json(r.body);
 }));
 
 /* ---------- Suivi DHL ---------- */

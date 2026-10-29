@@ -208,6 +208,9 @@ function clientForm(c){
   <fieldset><legend>Conditions commerciales</legend>
     <label>Remise habituelle<span class="suffix"><input id="f-remise" type="number" min="0" max="100" step="0.5" value="${c.remise??''}" placeholder="0"><span>%</span></span></label>
     <label>Plafond de crédit<span class="suffix"><input id="f-plafond" type="number" min="0" step="100" value="${c.plafond??''}" placeholder="0"><span>€</span></span></label>
+  </fieldset>
+  <fieldset><legend>DIOPTRA</legend>
+    <label class="full">Magasin DIOPTRA<input id="f-dioptra" value="${esc(c.dioptraMagasin||'')}" placeholder="Ex. Magasin Libreville Centre" autocomplete="off"><span class="hint">Facultatif. Le nom exact du magasin dans DIOPTRA : ses factures pourront y être envoyées en réception de stock.</span></label>
   </fieldset>`,
   `${isNew?'':`<button class="btn danger" data-act="del" data-id="${c.id}" style="margin-right:auto">Supprimer le client</button>`}<button class="btn" data-act="close">Annuler</button><button class="btn primary" id="f-ok">${isNew?'Ajouter le client':'Enregistrer'}</button>`,()=>{
     const upd=()=>{
@@ -237,7 +240,7 @@ function clientForm(c){
       const d={nom:$('#f-nom').value.trim(),contact:$('#f-contact').value.trim(),pays:$('#f-pays').value,ville:$('#f-ville').value.trim(),
         tel:$('#f-tel').value.replace(/^\s*\+\s*/,'').trim(),email:$('#f-email').value.trim(),adresse:$('#f-adresse').value.trim(),
         nif:$('#f-nif').value.trim(),rccm:$('#f-rccm').value.trim(),
-        tvaFR:$('#f-tva').checked,tvaIntra:$('#f-intra').value.trim().toUpperCase().replace(/\s/g,''),remise:Math.min(100,Math.max(0,+$('#f-remise').value||0)),plafond:Math.max(0,r2(+$('#f-plafond').value||0))};
+        tvaFR:$('#f-tva').checked,tvaIntra:$('#f-intra').value.trim().toUpperCase().replace(/\s/g,''),remise:Math.min(100,Math.max(0,+$('#f-remise').value||0)),plafond:Math.max(0,r2(+$('#f-plafond').value||0)),dioptraMagasin:$('#f-dioptra').value.trim()};
       if(!d.nom){toast('Indiquez la raison sociale du client.');$('#f-nom').focus();return}
       if(d.email&&!/^\S+@\S+\.\S+$/.test(d.email)){toast('L\'adresse e-mail n\'est pas valide.');$('#f-email').focus();return}
       const p=paysByCode(d.pays);
@@ -269,7 +272,7 @@ function viewClient(id){
       ${fact('Téléphone',c.tel?`<span class="mono">${esc(fmtTel(c.pays,c.tel))}</span>`:'')}
       ${fact('E-mail',esc(c.email))}
       ${fact('Ville',[esc(c.ville),p?esc(p[1]):''].filter(Boolean).join(', '))}
-      ${fact('Remise',c.remise?nf.format(c.remise)+' %':'')}
+      ${fact('Remise',c.remise?nf.format(c.remise)+' %':'')}${c.dioptraMagasin?fact('Magasin DIOPTRA',esc(c.dioptraMagasin)):''}
       ${fact('Encours',enc>0.005?money(enc)+(c.plafond>0?` <small>/ ${money(c.plafond)}</small>`:''):'Aucun',over?'bad':'')}
     </div>
   </section>
@@ -1340,7 +1343,7 @@ function venteDetail(id,tab){
   <div class="table-wrap"><table><thead><tr><th>Monture</th><th class="num">Qté</th><th class="num">PU HT</th><th class="num">Montant HT</th></tr></thead><tbody>
   ${v.lignes.map(l=>`<tr><td><b>${esc(l.designation)}</b><span class="sub"><span class="mono">${esc(l.etiquette)}</span>${l.detail?' · '+esc(l.detail):''}</span></td><td class="num">${l.qte}</td><td class="num">${puCell(l)}</td><td class="num">${money(lineHT(l))}</td></tr>`).join('')}
   </tbody></table></div>
-  <dl class="totals" style="max-width:320px;margin-left:auto">${remTotals(v)}${taxLines(v,regOf(v),v.tvaIntra)}</dl>`;
+  <dl class="totals" style="max-width:320px;margin-left:auto">${remTotals(v)}${taxLines(v,regOf(v),v.tvaIntra)}</dl>${dioBlock(v,c)}`;
   else if(vdTab==='reglements')body=`${regs.length?`<div class="docs">${regs.map(r=>`<div class="doc-row static"><span><b>${money(r.montant)}</b><span class="sub">${dF.format(new Date(r.date))} · ${esc(r.mode)}${regInfo(r)?' · '+esc(regInfo(r)):''}</span>${r.justifBanque?`<span class="sub" style="color:var(--ok)">Justifié à la banque le ${dF.format(new Date(r.justifBanque.le))}</span>`:''}</span><span class="row-btns">${/Virement/.test(r.mode)?`<button class="btn small" data-act="bk-open" data-id="${v.id}" data-rid="${r.id}">${r.justifBanque?'Renvoyer à la banque':'Justifier à la banque'}</button>`:''}${closedWeek(r.date)?'<span class="hint">Semaine clôturée</span>':`<button class="link danger-link" data-act="k-regdel" data-id="${r.id}">Supprimer</button>`}</span></div>`).join('')}</div>`:'<p class="muted">Aucun règlement pour cette facture.</p>'}
   <dl class="totals" style="max-width:320px;margin-left:auto"><dt>Total facturé</dt><dd>${money(v.ttc)}</dd><dt>Réglé</dt><dd>${money(paidOf(v))}</dd><dt class="big">Reste à payer</dt><dd class="big">${money(resteOf(v))}</dd></dl>`;
   else if(vdTab==='documents')body=attBlock(v)+`${assetsNS?`<label class="drop small" id="vd-drop" for="vd-file"><b>Ajouter des documents</b><span>Bordereau DHL, facture, photo… · PDF ou image, 20 Mo maximum</span>
@@ -1421,6 +1424,45 @@ function dhlBlock(v){
 }
 
 /* ---------- Paramètres ---------- */
+/* ---------- Connexion DIOPTRA ----------
+   La clé d'intégration est gardée par le serveur : le navigateur ne voit que « clé enregistrée oui / non ». */
+let DIO={configured:false,loaded:false,url:'',keySet:false,keyHint:''};
+async function loadDio(){try{const r=await fetch('/api/dioptra/config',{credentials:'same-origin'});if(r.ok){DIO={...await r.json(),loaded:true}}}catch(e){}return DIO}
+loadDio().then(()=>{if(location.hash==='#parametres'&&!$('#dio-key')?.value)render()});
+const dtF=new Intl.DateTimeFormat('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+function dioBlock(v,c){
+  const mag=c&&c.dioptraMagasin,d=v.dioptra;
+  if(!mag&&!d)return'';
+  const nb=v.lignes.reduce((t,l)=>t+l.qte,0),sansEAN=v.lignes.filter(l=>!(mon(l.montureId)||{}).ean).length;
+  let st='',btn='';
+  if(d&&d.statut==='envoye'){st=`<span class="dio-ok">Envoyée à DIOPTRA le ${dtF.format(new Date(d.le))} par ${esc(String(d.par||'').split(' ')[0])}</span><span class="sub">Magasin « ${esc(d.magasin||mag)} » · ${d.lignes} ligne${d.lignes>1?'s':''}${d.ref?' · réf. DIOPTRA '+esc(d.ref):''}${d.envois>1?` · envoyée ${d.envois} fois`:''}</span>`;
+    btn=`<button class="btn small" data-act="dio-send" data-id="${v.id}" data-force="1">Renvoyer</button>`}
+  else btn=`<button class="btn primary small" data-act="dio-send" data-id="${v.id}" ${mag&&DIO.configured?'':'disabled'}>Envoyer à DIOPTRA</button>`;
+  if(d&&d.erreur&&(!d.le||d.erreur.le>d.le))st+=`<span class="sub warn-txt">Dernier envoi échoué le ${dtF.format(new Date(d.erreur.le))} : ${esc(dioMsg(d.erreur))}</span>`;
+  if(!st)st=`<span><b>DIOPTRA</b> · les ${nb} monture${nb>1?'s':''} arriveront en réception dans le magasin « ${esc(mag)} ».</span>`;
+  const warn=!mag?'<span class="sub warn-txt">Ce client n\'a plus de magasin DIOPTRA dans sa fiche.</span>':!DIO.configured&&DIO.loaded?'<span class="sub warn-txt">Connexion DIOPTRA non réglée : renseignez l\'adresse et la clé dans les Paramètres.</span>':'';
+  return`<div class="dio-box" id="dio-box"><span class="dio-txt">${st}${warn}${sansEAN?`<span class="sub warn-txt">${sansEAN} ligne${sansEAN>1?'s':''} sans code EAN : DIOPTRA devra les rapprocher à la main.</span>`:''}</span><span class="row-btns">${btn}</span></div>`;
+}
+function dioMsg(e){
+  const h=e.http;if(h===401||h===403)return'clé refusée par DIOPTRA (vérifiez la clé dans les Paramètres)';
+  if(h===404)return(e.message&&/magasin/i.test(e.message))?e.message:'adresse ou magasin introuvable dans DIOPTRA'+(e.message?' ('+e.message+')':'');
+  if(h===409)return'DIOPTRA a déjà reçu cette facture'+(e.message?' ('+e.message+')':'');
+  return e.message||('erreur '+h);
+}
+async function dioSend(id,force,btn){
+  btn.disabled=true;const old=btn.textContent;btn.textContent='Envoi en cours…';
+  try{await window.PrismeaSync.flush()}catch(e){}
+  let r,j={};try{r=await fetch('/api/dioptra/send/'+encodeURIComponent(id),{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({force:!!force})});j=await r.json().catch(()=>({}))}
+  catch(e){btn.disabled=false;btn.textContent=old;toast('Connexion perdue : rien n\'a été envoyé.');return}
+  const v=S.ventes.find(x=>x.id===id);
+  if(j.dioptra&&v){v.dioptra=j.dioptra;window.PrismeaSync.applyRemote('ventes',id,j.vente||v,false)}
+  if(r.ok)toast('Facture envoyée à DIOPTRA');
+  else if(j.error==='magasin_manquant')toast('Renseignez le magasin DIOPTRA dans la fiche du client.');
+  else if(j.error==='non_configure')toast('Réglez la connexion DIOPTRA dans les Paramètres.');
+  else if(j.error==='deja_envoye')toast('Cette facture a déjà été envoyée.');
+  else toast('Envoi refusé : '+(j.dioptra&&j.dioptra.erreur?dioMsg(j.dioptra.erreur):dioMsg({http:r.status,message:j.message})));
+  if(!$('#modal').hidden)venteDetail(id,'facture');
+}
 function viewParametres(){
   const s=S.societe,v=k=>esc(s[k]??'');
   const nbDocs=S.ventes.reduce((t,x)=>t+(x.documents||[]).length,0);
@@ -1452,6 +1494,14 @@ function viewParametres(){
       <label>Transporteur par défaut<select id="s-transp">${Object.keys(TRANSPORTEURS).map(t=>`<option ${t===(s.transporteur||'DHL')?'selected':''}>${t}</option>`).join('')}</select></label>
     </fieldset></section>
   <div class="settings-save"><button class="btn primary" data-act="set-save">Enregistrer les paramètres</button></div>
+  <section class="panel" id="dio-panel"><h3>Connexion DIOPTRA</h3>
+    <p class="muted" style="margin-bottom:12px">Pour envoyer les factures en réception de stock dans DIOPTRA. La clé est gardée par le serveur de Prismea et n'est jamais affichée.</p>
+    <fieldset>
+      <label class="full">Adresse d'envoi<input id="dio-url" class="mono-in" value="${esc(DIO.url||'https://app.dioptra.pro/api/livraisons')}" spellcheck="false" autocomplete="off"></label>
+      <label class="full">Clé d'intégration<input id="dio-key" type="password" class="mono-in" placeholder="${DIO.keySet?'Clé enregistrée ('+esc(DIO.keyHint)+') : laissez vide pour la garder':'dpt_…'}" autocomplete="new-password" spellcheck="false"><span class="hint" id="dio-st">${DIO.loaded?(DIO.keySet?'Connexion réglée.':'Aucune clé enregistrée.'):'Chargement…'}</span></label>
+    </fieldset>
+    <div class="row-btns" style="justify-content:flex-start;margin-top:12px"><button class="btn primary" data-act="dio-save">Enregistrer la connexion</button>${DIO.keySet?'<button class="btn danger" data-act="dio-del">Retirer la clé</button>':''}</div>
+  </section>
   <section class="panel"><h3>Sauvegarde des données</h3>
     <p class="muted" style="margin-bottom:12px">Les données sont enregistrées en ligne et partagées entre Nicolas, Laurent et Jennifer. Vous pouvez télécharger une sauvegarde complète à tout moment. Restaurer une sauvegarde remplace les données pour tous les utilisateurs.</p>
     <div class="facts" style="border:0;padding:0;margin-bottom:14px">
@@ -1598,6 +1648,7 @@ document.addEventListener('click',e=>{
       v.expedition=e;save();render();venteDetail(id,'expedition');toast('Expédition enregistrée');
       if(e.suivi&&(e.transporteur||'DHL')==='DHL'&&window.__PRISMEA__.dhl&&(!e.dhl||old.suivi!==e.suivi))dhlRefresh(id);break}
     case'vd-dhl':dhlRefresh(id);break;
+    case'dio-send':{const force=!!b.dataset.force;if(force&&!b.dataset.sure){b.dataset.sure='1';b.textContent='Confirmer le renvoi';break}dioSend(id,force,b);break}
     case'vd-docdel':{
       if(!b.dataset.sure){b.dataset.sure='1';b.textContent='Confirmer';break}
       const v=S.ventes.find(x=>x.id===id),did=b.dataset.doc;if(!v)break;
@@ -1609,6 +1660,14 @@ document.addEventListener('click',e=>{
       S.societe.delai=Math.max(0,Math.round(+$('#s-delai').value||0));S.societe.transporteur=$('#s-transp').value;
       if(!S.societe.nom||!S.societe.adresse||!S.societe.siren)toast('Paramètres enregistrés. Pensez à compléter la raison sociale, l\'adresse et le SIREN.');else toast('Paramètres enregistrés');
       save();break}
+    case'dio-save':case'dio-del':{
+      const del=b.dataset.act==='dio-del';if(del&&!b.dataset.sure){b.dataset.sure='1';b.textContent='Confirmer le retrait de la clé';break}
+      const key=del?'':$('#dio-key').value.trim();if(!del&&key&&!/^dpt_/.test(key)){toast('La clé d\'intégration doit commencer par dpt_');break}
+      b.disabled=true;
+      fetch('/api/dioptra/config',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:$('#dio-url').value.trim(),key,removeKey:del})})
+        .then(async r=>{const j=await r.json().catch(()=>({}));if(!r.ok)throw j;DIO={...j,loaded:true};render();toast(del?'Clé DIOPTRA retirée':'Connexion DIOPTRA enregistrée')})
+        .catch(j=>{b.disabled=false;toast(j&&j.error==='adresse_invalide'?'Adresse invalide : elle doit commencer par https://':j&&j.error==='cle_invalide'?'Clé invalide : elle doit commencer par dpt_ et ne contenir que lettres, chiffres, _ ou -':'Enregistrement impossible, réessayez.')});
+      break}
     case'set-backup':offerFile(`Prismea sauvegarde ${isoD(new Date())}.json`,JSON.stringify(S,null,1));break;
     case'set-restore-ok':if(pendingRestore){b.disabled=true;b.textContent='Restauration…';
       fetch('/api/import',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({state:pendingRestore})})

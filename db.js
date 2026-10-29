@@ -35,6 +35,12 @@ async function migrate() {
       created_at timestamptz not null default now(),
       created_by integer references users(id)
     );
+    create table if not exists settings(
+      key text primary key,
+      value jsonb not null,
+      updated_at timestamptz not null default now(),
+      updated_by integer references users(id)
+    );
   `);
 }
 
