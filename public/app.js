@@ -307,7 +307,7 @@ function ventesParMois(id){
 let doc=null;
 const ICO_SCAN='<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 7V4.5A1.5 1.5 0 0 1 4.5 3H7M17 3h2.5A1.5 1.5 0 0 1 21 4.5V7M21 17v2.5a1.5 1.5 0 0 1-1.5 1.5H17M7 21H4.5A1.5 1.5 0 0 1 3 19.5V17"/><path d="M7 8v8M10 8v8M13.5 8v8M17 8v8"/></svg>';
 function startDoc(kind,clientId){
-  if(doc&&doc.kind===kind&&doc.clientId===clientId)return;
+  if(doc&&doc.kind===kind&&doc.clientId===clientId)return;// (un devis repris en vente arrive ici déjà rempli)
   const c=cli(clientId);const v=new Date();v.setDate(v.getDate()+30);
   doc={kind,clientId,lignes:[],remise:c?c.remise||0:0,regime:regimeOf(c),tvaIntra:c?c.tvaIntra||'':'',paiement:PAY_LATER,validite:v.toISOString().slice(0,10)};
 }
@@ -384,7 +384,8 @@ async function validateDoc(){
   const base={id:doc.kind[0]+Date.now().toString(36),kind:doc.kind,date:new Date().toISOString(),clientId:doc.clientId,lignes:doc.lignes.map(l=>({...l,pa:l.pa!=null?l.pa:((mon(l.montureId)||{}).pa||0)})),remise:+doc.remise||0,...(isE(doc.remiseT)?{remiseT:'€'}:{}),regime:doc.regime,tvaIntra:doc.regime==='ue'?doc.tvaIntra:'',...t};
   if(doc.kind==='vente'){
     S.seqV=Math.max(S.seqV||0,nums[0]);S.seqFA=Math.max(S.seqFA||0,nums[1]);const v={...base,num:'V'+y+'-'+pad4(nums[0]),facture:'FA'+y+'-'+pad4(nums[1]),paiement:doc.paiement};
-    v.lignes.forEach(l=>{mon(l.montureId).qte-=l.qte});factureFor(v);v.regMig=true;S.ventes.push(v);
+    v.lignes.forEach(l=>{mon(l.montureId).qte-=l.qte});factureFor(v);v.regMig=true;
+    if(doc.fromDevis){const dv=S.devis.find(x=>x.id===doc.fromDevis);if(dv){dv.venteId=v.id;v.devisId=dv.id}}S.ventes.push(v);
     if(doc.paiement!==PAY_LATER)S.reglements.push({id:'g'+Date.now().toString(36),venteId:v.id,clientId:v.clientId,date:v.date,montant:v.ttc,mode:doc.paiement,banque:PAY_DETAIL[doc.paiement]?(doc.banque||''):'',ref:PAY_DETAIL[doc.paiement]?(doc.ref||''):''});
   }else{
     S.seqD=Math.max(S.seqD||0,nums[0]);S.devis.push({...base,num:'D'+y+'-'+pad4(nums[0]),validite:doc.validite||base.date.slice(0,10)});
@@ -401,8 +402,111 @@ function showDoc(id){
   ${d.lignes.map(l=>`<tr><td><b>${esc(l.designation)}</b><span class="sub"><span class="mono">${esc(l.etiquette)}</span> · ${esc(l.detail)}</span></td><td class="num">${l.qte}</td><td class="num">${puCell(l)}</td><td class="num">${money(lineHT(l))}</td></tr>`).join('')}
   </tbody></table></div>
   <div class="doc-foot"><span class="muted">${d.kind==='vente'?'Paiement : '+esc(d.paiement):'Valable jusqu\'au '+dF.format(new Date(d.validite))}</span>
-  <dl class="totals" style="min-width:250px">${remTotals(d)}${taxLines(d,regOf(d),d.tvaIntra)}</dl></div>`,
-  `<button class="btn primary" data-act="close">Fermer</button>`);
+  <dl class="totals" style="min-width:250px">${remTotals(d)}${taxLines(d,regOf(d),d.tvaIntra)}</dl></div>
+  ${d.kind==='devis'&&d.venteId?`<p class="hint">Transformé en vente ${esc((S.ventes.find(v=>v.id===d.venteId)||{}).num||'')}.</p>`:''}${d.kind==='devis'&&d.proforma?`<p class="hint">Proforma ${esc(pfNum(d))} éditée le ${dF.format(new Date(d.proforma.le))}.</p>`:''}`,
+  d.kind==='devis'?`<button class="btn" data-act="pf-open" data-id="${d.id}" style="margin-right:auto">Facture proforma</button>${d.venteId?'':`<button class="btn" data-act="dv-vente" data-id="${d.id}">Transformer en vente</button>`}<button class="btn primary" data-act="close">Fermer</button>`:`<button class="btn primary" data-act="close">Fermer</button>`);
+}
+/* Devis → vente : les lignes et remises du devis sont reprises dans une nouvelle vente, à valider */
+function devisToVente(id){
+  const d=S.devis.find(x=>x.id===id);if(!d)return;const c=cli(d.clientId);
+  const lignes=d.lignes.filter(l=>mon(l.montureId)).map(l=>{const m=mon(l.montureId);return{montureId:l.montureId,etiquette:m.etiquette,designation:l.designation,detail:l.detail,qte:l.qte,pu:l.pu,...(l.rem?{rem:l.rem}:{}),...(l.remT?{remT:l.remT}:{})}});
+  doc={kind:'vente',clientId:d.clientId,lignes,remise:d.remise||0,...(d.remiseT?{remiseT:d.remiseT}:{}),regime:regimeOf(c),tvaIntra:c?c.tvaIntra||'':'',paiement:PAY_LATER,fromDevis:d.id};
+  closeModal();location.hash='vente-'+d.clientId;toast(`Devis ${d.num} repris : vérifiez puis validez la vente`);
+}
+/* ---------- Facture proforma ---------- */
+const pfNum=d=>'PF'+String(d.num).replace(/^D/,'');
+function nombreEnLettres(n){
+  const U=['zéro','un','deux','trois','quatre','cinq','six','sept','huit','neuf','dix','onze','douze','treize','quatorze','quinze','seize','dix-sept','dix-huit','dix-neuf'];
+  const D=['','','vingt','trente','quarante','cinquante','soixante','soixante','quatre-vingt','quatre-vingt'];
+  const deux=(x,fin)=>{if(x<20)return U[x];const d=Math.floor(x/10),u=x%10;
+    if(d===7||d===9)return D[d]+(d===7&&u===1?'-et-':'-')+U[10+u];
+    if(u===0)return D[d]+(d===8&&fin?'s':'');if(u===1&&d<8)return D[d]+'-et-un';return D[d]+'-'+U[u]};
+  const trois=(x,fin)=>{const c=Math.floor(x/100),r=x%100;let t='';
+    if(c)t=(c>1?U[c]+'-':'')+'cent'+(c>1&&!r&&fin?'s':'');
+    if(r)t+=(t?'-':'')+deux(r,fin);return t};
+  n=Math.floor(n);if(n===0)return'zéro';
+  const parts=[];const mil=Math.floor(n/1e9),mio=Math.floor(n%1e9/1e6),k=Math.floor(n%1e6/1e3),r=n%1e3;
+  if(mil)parts.push(trois(mil,true)+'-milliard'+(mil>1?'s':''));
+  if(mio)parts.push(trois(mio,true)+'-million'+(mio>1?'s':''));
+  if(k)parts.push((k===1?'':trois(k,false)+'-')+'mille');
+  if(r)parts.push(trois(r,true));
+  return parts.join('-');
+}
+const eurosEnLettres=x=>{const e=Math.floor(r2(x)+1e-9),c=Math.round((r2(x)-e)*100);return nombreEnLettres(e)+(e>1?' euros':' euro')+(c?' et '+nombreEnLettres(c)+(c>1?' centimes':' centime'):'')};
+const hsOf=l=>{const m=mon(l.montureId)||{};return m.hs||((catByEAN(m.ean)||{}).hs)||''};
+function proformaForm(id){
+  const d=S.devis.find(x=>x.id===id);if(!d)return;const c=cli(d.clientId)||{},p=paysByCode(c.pays);
+  const def={...(S.societe.proforma||{}),...(d.proforma||{})};
+  const v=(k,x)=>esc(def[k]??x??'');
+  openModal('Facture proforma '+pfNum(d),`${c.nom||''} · devis ${d.num} · ${money(d.ttc)}`,`
+  <p class="muted" style="margin-top:0">Pour l'autorisation d'importation du client (ASI…) et son virement. Ces informations sont mémorisées pour les prochaines proformas.</p>
+  <fieldset>
+    <label>Incoterm<select id="pf-inco">${INCOTERMS.map(x=>`<option ${x===(def.incoterm||'CPT')?'selected':''}>${x}</option>`).join('')}</select></label>
+    <label>Lieu (Incoterm)<input id="pf-lieu" value="${v('lieu',c.ville||(p?p[1]:''))}" placeholder="Ex. Libreville"></label>
+    <label>Transport<input id="pf-transp" value="${v('transport','Fret aérien express (DHL)')}"></label>
+    <label>Délai de livraison<input id="pf-delai" value="${v('delai','5 à 10 jours après réception du paiement')}"></label>
+    <label>Origine des marchandises<input id="pf-origine" value="${v('origine','')}" placeholder="Ex. France, Italie, Chine"></label>
+    <label>Code douanier par défaut<input id="pf-hs" class="mono-in" value="${v('hs','9003')}"><span class="hint">Utilisé pour les montures sans code douanier dans leur fiche</span></label>
+    <label>Poids brut estimé<span class="suffix"><input id="pf-poids" type="number" min="0" step="0.1" value="${esc(d.proforma?.poids??'')}"><span>kg</span></span></label>
+    <label>Nombre de colis<input id="pf-colis" type="number" min="0" value="${esc(d.proforma?.colis??'')}"></label>
+    <label class="full">Conditions de paiement<input id="pf-paie" value="${v('paiement','100 % à la commande, par virement bancaire')}"></label>
+  </fieldset>`,
+  `<button class="btn" data-act="close">Annuler</button><button class="btn primary" id="pf-ok">Télécharger la proforma (PDF)</button>`,()=>{
+    $('#pf-ok').onclick=()=>{
+      if(!window.jspdf){toast('Le module PDF n\'a pas pu se charger. Vérifiez la connexion internet.');return}
+      const o={incoterm:$('#pf-inco').value,lieu:$('#pf-lieu').value.trim(),transport:$('#pf-transp').value.trim(),delai:$('#pf-delai').value.trim(),origine:$('#pf-origine').value.trim(),hs:$('#pf-hs').value.trim(),paiement:$('#pf-paie').value.trim()};
+      S.societe.proforma={incoterm:o.incoterm,transport:o.transport,delai:o.delai,origine:o.origine,hs:o.hs,paiement:o.paiement};
+      d.proforma={...o,poids:$('#pf-poids').value?r2(+$('#pf-poids').value):'',colis:$('#pf-colis').value?Math.round(+$('#pf-colis').value):'',le:new Date().toISOString()};save();
+      offerFile(`Proforma ${pfNum(d)} - ${(c.nom||'client').replace(/[\\/:*?"<>|]/g,'')}.pdf`,proformaPDF(d));closeModal();
+    };
+  });
+}
+function proformaPDF(d){
+  const {jsPDF}=window.jspdf;const pdf=new jsPDF({unit:'mm',format:'a4'}),o=d.proforma||{};
+  const txt=s=>String(s??'').replace(/[\u00A0\u202F]/g,' ').replace(/□/g,'/').replace(/[−–]/g,'-');const eur=n=>txt(money(n));
+  const s=S.societe,c=cli(d.clientId)||{},p=paysByCode(c.pays),reg=regOf(d);const W=210,L=16,R=W-16;let y=18;
+  pdf.setFont('helvetica','bold');pdf.setFontSize(15);pdf.text(txt(s.nom||'Votre société'),L,y);
+  pdf.setFont('helvetica','normal');pdf.setFontSize(8.5);pdf.setTextColor(80);
+  const sl=[[s.forme,s.capital?'au capital de '+s.capital:''].filter(Boolean).join(' '),s.adresse,[s.cp,s.ville].filter(Boolean).join(' '),[s.tel,s.email].filter(Boolean).join(' · '),
+    s.siren?'SIREN '+s.siren+(s.rcs?' · '+s.rcs:''):'',s.tvaIntra?'N° TVA '+s.tvaIntra:'',s.eori?'EORI '+s.eori:''].filter(Boolean);
+  sl.forEach((t,i)=>pdf.text(txt(t),L,y+5+i*4));
+  pdf.setTextColor(0);pdf.setFont('helvetica','bold');pdf.setFontSize(17);pdf.text('FACTURE PROFORMA',R,y,{align:'right'});
+  pdf.setFontSize(10);pdf.text(txt('N° '+pfNum(d)),R,y+7,{align:'right'});
+  pdf.setFont('helvetica','normal');pdf.setFontSize(9);
+  pdf.text(txt('Date : '+dF.format(new Date(o.le||Date.now()))),R,y+12,{align:'right'});
+  pdf.text(txt('Valable jusqu\'au : '+dF.format(new Date(d.validite))),R,y+16.5,{align:'right'});
+  pdf.text(txt('Devis '+d.num),R,y+21,{align:'right'});
+  y=Math.max(y+5+sl.length*4,y+24)+8;
+  pdf.setFillColor(246,248,250);pdf.roundedRect(110,y,R-110,34,2,2,'F');
+  pdf.setFontSize(8);pdf.setTextColor(100);pdf.text('DESTINATAIRE',114,y+6);pdf.setTextColor(0);
+  pdf.setFont('helvetica','bold');pdf.setFontSize(10.5);pdf.text(txt(c.nom||''),114,y+12);pdf.setFont('helvetica','normal');pdf.setFontSize(8.8);
+  [...(c.adresse||'').split('\n'),[c.ville,p?p[1]:''].filter(Boolean).join(', '),c.tel?fmtTel(c.pays,c.tel):'',c.nif?'NIF '+c.nif:(c.tvaIntra?'N° TVA '+c.tvaIntra:'')].filter(Boolean).slice(0,4).forEach((t,i)=>pdf.text(txt(t),114,y+17+i*4.2));
+  // conditions de livraison à gauche
+  pdf.setFontSize(8.6);const cond=[['Incoterm',[o.incoterm,o.lieu].filter(Boolean).join(' ')],['Transport',o.transport],['Livraison',o.delai],['Origine',o.origine],
+    ['Colis / poids',[o.colis?o.colis+' colis':'',o.poids?String(o.poids).replace('.',',')+' kg brut (estimé)':''].filter(Boolean).join(' · ')]].filter(x=>x[1]);
+  cond.forEach(([k,val],i)=>{pdf.setTextColor(100);pdf.text(txt(k),L,y+6+i*5.2);pdf.setTextColor(0);pdf.text(pdf.splitTextToSize(txt(val),62)[0],L+24,y+6+i*5.2)});
+  y+=44;
+  const hasRem=d.lignes.some(l=>remL(l));
+  const body=d.lignes.map(l=>{const r=[txt(l.etiquette),txt(l.designation+(l.detail?' - '+l.detail:'')),txt(hsOf(l)||o.hs||''),String(l.qte),eur(l.pu)];if(hasRem)r.push(remL(l)?(isE(l.remT)?'-'+eur(remL(l)):'-'+txt(fmtPct(remL(l)))+' %'):'');r.push(eur(lineHT(l)));return r});
+  const head=['Réf.','Désignation','Code douanier','Qté','PU HT'];if(hasRem)head.push('Remise');head.push('Montant HT');
+  const cs={0:{cellWidth:18},2:{cellWidth:24},3:{halign:'right',cellWidth:11},4:{halign:'right',cellWidth:22}};
+  if(hasRem){cs[5]={halign:'right',cellWidth:17};cs[6]={halign:'right',cellWidth:25}}else cs[5]={halign:'right',cellWidth:27};
+  pdf.autoTable({startY:y,head:[head],body,margin:{left:L,right:16},styles:{font:'helvetica',fontSize:8.4,cellPadding:2},headStyles:{fillColor:[10,102,112],textColor:255},columnStyles:cs});
+  y=pdf.lastAutoTable.finalY+6;
+  const nb=d.lignes.reduce((t,l)=>t+l.qte,0);
+  const tot=[['Nombre de montures',String(nb)]];
+  if(d.remLignes||d.rem)tot.push(['Total brut HT',eur(d.brut)]);if(d.remLignes)tot.push(['Remises sur montures','-'+eur(d.remLignes)]);if(d.rem)tot.push([txt(remCliLabel(d)),'-'+eur(d.rem)]);
+  tot.push(['Total HT',eur(d.ht)]);if(reg==='fr')tot.push(['TVA 20 %',eur(d.tva)]);else tot.push(['TVA','Non applicable']);tot.push(['Total à payer',eur(d.ttc)]);
+  if(y+tot.length*5.5>270){pdf.addPage();y=20}
+  tot.forEach(([k,val],i)=>{const last=i===tot.length-1;pdf.setFont('helvetica',last?'bold':'normal');pdf.setFontSize(last?11:9.2);if(last){pdf.setDrawColor(10,102,112);pdf.line(120,y-4,R,y-4)}pdf.text(txt(k),122,y);pdf.text(val,R,y,{align:'right'});y+=last?7:5});
+  y+=2;pdf.setFont('helvetica','normal');pdf.setFontSize(8.8);
+  const words=pdf.splitTextToSize(txt('Arrêtée la présente facture proforma à la somme de : '+eurosEnLettres(d.ttc)+'.'),R-L);pdf.text(words,L,y);y+=words.length*4.2+3;
+  const legal=reg==='fr'?'':reg==='ue'?`Livraison intracommunautaire exonérée de TVA, article 262 ter I du CGI.`:'Exportation exonérée de TVA, article 262 I du CGI.';
+  const lines=[legal,o.paiement?'Conditions de paiement : '+o.paiement+'.':'',s.iban?`Coordonnées bancaires : ${s.banque?s.banque+' · ':''}IBAN ${s.iban}${s.bic?' · BIC '+s.bic:''}. Merci d'indiquer la référence ${pfNum(d)} sur votre virement.`:'',
+    'Facture proforma : document préalable sans valeur comptable, établi pour l\'autorisation d\'importation et le règlement de la commande. La facture définitive sera établie à l\'expédition.'].filter(Boolean);
+  lines.forEach(t=>{const w=pdf.splitTextToSize(txt(t),R-L);if(y+w.length*4>270){pdf.addPage();y=20}pdf.text(w,L,y);y+=w.length*4+2});
+  if(y>250){pdf.addPage();y=20}y+=6;pdf.setFontSize(8.5);pdf.setTextColor(100);pdf.text('Cachet et signature',R-60,y);pdf.setDrawColor(200);pdf.rect(R-60,y+2,60,24);pdf.setTextColor(0);
+  return pdf.output('arraybuffer');
 }
 
 /* ---------- Stock ---------- */
@@ -551,6 +655,7 @@ function montureForm(m,onSaved){
     <datalist id="dl-marques">${marques.map(x=>`<option value="${esc(x)}"></option>`).join('')}</datalist>
     <label>Modèle <span class="req">*</span><input id="m-modele" value="${v('modele')}"></label>
     <label>Coloris<input id="m-coloris" value="${v('coloris')}"></label>
+    <label>Code douanier<input id="m-hs" class="mono-in" value="${v('hs')}" placeholder="Ex. 9003110010"></label>
     <label>Matière<select id="m-mat"><option value="">Non renseignée</option>${[...new Set([...MATIERES,...(m.matiere?[m.matiere]:[])])].map(x=>`<option ${x===m.matiere?'selected':''}>${esc(x)}</option>`).join('')}</select></label>
   </fieldset>
   <fieldset class="three"><legend>Taille</legend>
@@ -583,7 +688,7 @@ function montureForm(m,onSaved){
     };
     ['m-marque','m-pa'].forEach(i=>$('#'+i).addEventListener('input',syncPv));$('#m-man').addEventListener('change',syncPv);syncPv();
     $('#m-ok').onclick=async()=>{
-      const d={ean:$('#m-ean').value.trim(),marque:$('#m-marque').value.trim(),modele:$('#m-modele').value.trim(),coloris:$('#m-coloris').value.trim(),matiere:$('#m-mat').value,
+      const d={ean:$('#m-ean').value.trim(),marque:$('#m-marque').value.trim(),modele:$('#m-modele').value.trim(),coloris:$('#m-coloris').value.trim(),matiere:$('#m-mat').value,hs:$('#m-hs').value.replace(/\s/g,''),
         calibre:$('#m-cal').value.trim(),pont:$('#m-pont').value.trim(),branche:$('#m-br').value.trim(),
         pa:r2(+$('#m-pa').value||0),pv:r2(+$('#m-pv').value||0),pvManuel:!!(coefOf($('#m-marque').value.trim())&&$('#m-man').checked),seuil:Math.max(0,Math.round(+$('#m-seuil').value||0))};
       if(!d.marque||!d.modele){toast('La marque et le modèle sont obligatoires.');return}
@@ -598,7 +703,7 @@ function montureForm(m,onSaved){
   });
 }
 async function montureFromCatalogue(c){
-  const m={id:'m'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),etiquette:await nextEtiquette(c.marque),ean:c.ean,marque:ensureMarque(c.marque).nom,modele:c.modele,coloris:c.coloris||'',matiere:c.matiere||'',
+  const m={id:'m'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),etiquette:await nextEtiquette(c.marque),ean:c.ean,marque:ensureMarque(c.marque).nom,modele:c.modele,coloris:c.coloris||'',matiere:c.matiere||'',hs:c.hs||'',
     calibre:c.calibre||'',pont:c.pont||'',branche:c.branche||'',pa:c.pa||0,pv:c.pv||0,seuil:2,qte:0};
   applyCoef(m);S.montures.push(m);save();return m;
 }
@@ -905,6 +1010,7 @@ const CAT_FIELDS=[
   ['pont','Pont',false,/(pont|bridge|dbl)/],
   ['branche','Branche',false,/(branche|temple|arm\b|arm_|length)/],
   ['matiere','Matière',false,/(matiere|material|materiau)/],
+  ['hs','Code douanier',false,/(douan|hs.?code|customs|taric|nomenclature|tariff)/],
   ['taille','Taille complète (52-18-140)',false,/(taille|size|dimension)/],
   ['pa','Prix d\'achat HT',false,/(achat|wholesale|whs|cost|prix.?net|net.?price|purchase|gros|tarif|pa\b|ppht|buy)/],
   ['pv','Prix de vente HT (sans coefficient)',false,/(vente|retail|pvc|rrp|msrp|public|selling|pv\b|consumer|sale)/]
@@ -1102,7 +1208,7 @@ function optoRows(xd){
   if(!rows.length)return null;
   const brands=[...new Set(rows.map(r=>r[1]).filter(Boolean))];
   return{rows:[head,...rows],info:`Norme ${fmt}${supNom?' · fournisseur '+supNom:''} · ${brands.length} marque${brands.length>1?'s':''} : ${brands.join(', ')}`,
-    map:{ean:0,marque:1,modele:2,coloris:3,calibre:4,pont:5,branche:6,pa:7,pv:rows.some(r=>r[8])?8:undefined,matiere:rows.some(r=>r[11])?11:undefined},fournisseur:supNom,opto:true};
+    map:{ean:0,marque:1,modele:2,coloris:3,calibre:4,pont:5,branche:6,pa:7,pv:rows.some(r=>r[8])?8:undefined,matiere:rows.some(r=>r[11])?11:undefined,hs:rows.some(r=>r[10])?10:undefined},fournisseur:supNom,opto:true};
 }
 function prepareImport(name,rows,info,x){
   rows=rows.filter(r=>r.some(c=>String(c).trim()!==''));
@@ -1130,7 +1236,7 @@ function mappedRows(){
   const {data,map}=imp;const g=(r,k)=>map[k]!=null?r[map[k]]:'';
   return data.map(r=>{
     const o={ean:cellEAN(g(r,'ean')),marque:String(g(r,'marque')||imp.marque||'').trim(),modele:String(g(r,'modele')||'').trim(),coloris:String(g(r,'coloris')||'').trim(),
-      matiere:String(g(r,'matiere')||'').trim(),calibre:String(g(r,'calibre')||'').trim(),pont:String(g(r,'pont')||'').trim(),branche:String(g(r,'branche')||'').trim(),pa:r2(parseNum(g(r,'pa'))),pv:r2(parseNum(g(r,'pv')))};
+      matiere:String(g(r,'matiere')||'').trim(),hs:String(g(r,'hs')||'').replace(/\s/g,''),calibre:String(g(r,'calibre')||'').trim(),pont:String(g(r,'pont')||'').trim(),branche:String(g(r,'branche')||'').trim(),pa:r2(parseNum(g(r,'pa'))),pv:r2(parseNum(g(r,'pv')))};
     const t=String(g(r,'taille')||'');const x=t.match(/(\d{2})\D+(\d{1,2})(?:\D+(\d{3}))?/);
     if(x){o.calibre=o.calibre||x[1];o.pont=o.pont||x[2];o.branche=o.branche||x[3]||''}
     if(o.marque&&o.modele.toLowerCase().startsWith(o.marque.toLowerCase()+' '))o.modele=o.modele.slice(o.marque.length+1).trim();
@@ -1168,7 +1274,7 @@ function runImport(){
   rows.forEach(r=>{const k=normEAN(r.ean);const e={...r,id:'e'+k,importe:now};
     if(idx.has(k)){S.catalogue[idx.get(k)]=e;up++}else{idx.set(k,S.catalogue.length);S.catalogue.push(e);nw++}
     const m=S.montures.find(x=>normEAN(x.ean)===k);
-    if(m){['marque','modele','coloris','matiere','calibre','pont','branche'].forEach(f=>{if(!m[f]&&r[f])m[f]=r[f]});if(!m.pv&&r.pv)m.pv=r.pv;applyCoef(m);ms++}
+    if(m){['marque','modele','coloris','matiere','hs','calibre','pont','branche'].forEach(f=>{if(!m[f]&&r[f])m[f]=r[f]});if(!m.pv&&r.pv)m.pv=r.pv;applyCoef(m);ms++}
   });
   save();imp=null;render();
   toast(`Catalogue importé : ${nw} nouvelle${nw>1?'s':''} référence${nw>1?'s':''}${up?`, ${up} mise${up>1?'s':''} à jour`:''}`);
@@ -2778,6 +2884,8 @@ document.addEventListener('click',e=>{
     case'doc-ok':validateDoc();break;
     case'doc-cancel':{const c=doc&&doc.clientId;doc=null;location.hash=c?'client-'+c:'clients';break}
     case'showdoc':showDoc(id);break;
+    case'pf-open':proformaForm(id);break;
+    case'dv-vente':devisToVente(id);break;
   }
 });
 const d=new Intl.DateTimeFormat('fr-FR',{weekday:'long',day:'numeric',month:'long',year:'numeric'}).format(new Date());
