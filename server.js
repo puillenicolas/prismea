@@ -151,7 +151,7 @@ app.post('/api/sync', json, needAuth, wrap(async (req, res) => {
         /* idem pour l'état d'envoi à DIOPTRA */
         const srvD = cur.rows[0] && cur.rows[0].data.dioptra;
         if (srvD && (!data.dioptra || JSON.stringify(data.dioptra) !== JSON.stringify(srvD))) {
-          const t = d => (d && ((d.erreur && d.erreur.le) > (d.le || '') ? d.erreur.le : d.le)) || '';
+          const t = d => (d ? [d.le, d.receptionLe, d.erreur && d.erreur.le].filter(Boolean).sort().pop() : '') || '';
           if (!data.dioptra || t(data.dioptra) < t(srvD)) data = { ...data, dioptra: srvD };
         }
         const srv = cur.rows[0] && cur.rows[0].data.expedition && cur.rows[0].data.expedition.dhl;
@@ -269,6 +269,11 @@ app.get('/api/dioptra/config', needAuth, wrap(async (req, res) => res.json(await
 app.post('/api/dioptra/config', json, needAuth, wrap(async (req, res) => {
   try { res.json(await dioptra.saveConfig(req.body || {}, req.session.user.id)); }
   catch (e) { if (e.code) return res.status(400).json({ error: e.code }); throw e; }
+}));
+app.get('/api/dioptra/payload/:venteId', needAuth, wrap(async (req, res) => {
+  const p = await dioptra.payloadFor(String(req.params.venteId));
+  if (!p) return res.status(404).json({ error: 'vente_introuvable' });
+  res.json(p);
 }));
 app.post('/api/dioptra/send/:venteId', json, needAuth, wrap(async (req, res) => {
   const r = await dioptra.send(String(req.params.venteId), { force: !!(req.body && req.body.force), user: req.session.user });

@@ -1431,23 +1431,29 @@ async function loadDio(){try{const r=await fetch('/api/dioptra/config',{credenti
 loadDio().then(()=>{if(location.hash==='#parametres'&&!$('#dio-key')?.value)render()});
 const dtF=new Intl.DateTimeFormat('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
 function dioBlock(v,c){
-  const mag=c&&c.dioptraMagasin,d=v.dioptra;
-  if(!mag&&!d)return'';
+  const mag=c&&c.dioptraMagasin,d=v.dioptra||{};
   const nb=v.lignes.reduce((t,l)=>t+l.qte,0),sansEAN=v.lignes.filter(l=>!(mon(l.montureId)||{}).ean).length;
-  let st='',btn='';
-  if(d&&d.statut==='envoye'){st=`<span class="dio-ok">Envoyée à DIOPTRA le ${dtF.format(new Date(d.le))} par ${esc(String(d.par||'').split(' ')[0])}</span><span class="sub">Magasin « ${esc(d.magasin||mag)} » · ${d.lignes} ligne${d.lignes>1?'s':''}${d.ref?' · réf. DIOPTRA '+esc(d.ref):''}${d.envois>1?` · envoyée ${d.envois} fois`:''}</span>`;
-    btn=`<button class="btn small" data-act="dio-send" data-id="${v.id}" data-force="1">Renvoyer</button>`}
-  else btn=`<button class="btn primary small" data-act="dio-send" data-id="${v.id}" ${mag&&DIO.configured?'':'disabled'}>Envoyer à DIOPTRA</button>`;
-  if(d&&d.erreur&&(!d.le||d.erreur.le>d.le))st+=`<span class="sub warn-txt">Dernier envoi échoué le ${dtF.format(new Date(d.erreur.le))} : ${esc(dioMsg(d.erreur))}</span>`;
-  if(!st)st=`<span><b>DIOPTRA</b> · les ${nb} monture${nb>1?'s':''} arriveront en réception dans le magasin « ${esc(mag)} ».</span>`;
-  const warn=!mag?'<span class="sub warn-txt">Ce client n\'a plus de magasin DIOPTRA dans sa fiche.</span>':!DIO.configured&&DIO.loaded?'<span class="sub warn-txt">Connexion DIOPTRA non réglée : renseignez l\'adresse et la clé dans les Paramètres.</span>':'';
-  return`<div class="dio-box" id="dio-box"><span class="dio-txt">${st}${warn}${sansEAN?`<span class="sub warn-txt">${sansEAN} ligne${sansEAN>1?'s':''} sans code EAN : DIOPTRA devra les rapprocher à la main.</span>`:''}</span><span class="row-btns">${btn}</span></div>`;
+  const lines=[];let btn='';
+  if(d.statut==='receptionnee'){
+    lines.push(`<span class="dio-ok">Réceptionnée dans DIOPTRA</span><span class="sub">La livraison${d.ref?' '+esc(d.ref):''} a déjà été réceptionnée par l'opticien : elle ne peut plus être renvoyée.${d.le?' Envoyée le '+dtF.format(new Date(d.le))+'.':''}</span>`);
+  }else if(d.statut==='envoye'){
+    lines.push(`<span class="dio-ok">Envoyée à DIOPTRA le ${dtF.format(new Date(d.le))} par ${esc(String(d.par||'').split(' ')[0])}</span><span class="sub">Magasin « ${esc(d.magasin||mag||'')} » · ${d.articles||d.lignes} monture${(d.articles||d.lignes)>1?'s':''}${d.ref?' · réf. '+esc(d.ref):''}${d.envois>1?` · ${d.envois} envois`:''} · tant qu'elle n'est pas réceptionnée, un nouvel envoi met à jour la livraison.</span>`);
+    btn=`<button class="btn small" data-act="dio-send" data-id="${v.id}" data-force="1" ${mag&&DIO.configured?'':'disabled'}>Renvoyer (mettre à jour)</button>`;
+  }else if(mag){
+    lines.push(`<span><b>DIOPTRA</b> · les ${nb} monture${nb>1?'s':''} arriveront en réception dans le magasin « ${esc(mag)} ».</span>`);
+    btn=`<button class="btn primary small" data-act="dio-send" data-id="${v.id}" ${DIO.configured?'':'disabled'}>Envoyer à DIOPTRA</button>`;
+  }else lines.push(`<span><b>DIOPTRA</b> · <span class="muted">ce client n'a pas de magasin DIOPTRA : renseignez-le dans sa fiche pour l'envoi automatique, ou téléchargez le fichier à importer à la main.</span></span>`);
+  if(d.erreur&&d.statut!=='receptionnee')lines.push(`<span class="sub warn-txt">Dernier envoi refusé le ${dtF.format(new Date(d.erreur.le))} : ${esc(dioMsg(d.erreur))}</span>`);
+  if(mag&&!DIO.configured&&DIO.loaded&&d.statut!=='receptionnee')lines.push('<span class="sub warn-txt">Connexion DIOPTRA non réglée : renseignez l\'adresse et la clé dans les Paramètres.</span>');
+  if(sansEAN)lines.push(`<span class="sub warn-txt">${sansEAN} ligne${sansEAN>1?'s':''} sans code EAN : l'opticien devra les rapprocher à la main.</span>`);
+  return`<div class="dio-box" id="dio-box"><span class="dio-txt">${lines.join('')}</span><span class="row-btns">${btn}<button class="btn small ghost" data-act="dio-dl" data-id="${v.id}" ${dlNS?'':'disabled'}>Télécharger pour DIOPTRA</button></span></div>`;
 }
 function dioMsg(e){
-  const h=e.http;if(h===401||h===403)return'clé refusée par DIOPTRA (vérifiez la clé dans les Paramètres)';
-  if(h===404)return(e.message&&/magasin/i.test(e.message))?e.message:'adresse ou magasin introuvable dans DIOPTRA'+(e.message?' ('+e.message+')':'');
-  if(h===409)return'DIOPTRA a déjà reçu cette facture'+(e.message?' ('+e.message+')':'');
-  return e.message||('erreur '+h);
+  if(e.http===401||e.http===403)return'Vérifiez la clé DIOPTRA dans les paramètres.';
+  if(e.http===400)return e.message||'données refusées par DIOPTRA';
+  if(e.http===409)return'la livraison a déjà été réceptionnée dans DIOPTRA.';
+  if(e.http===404)return'adresse DIOPTRA introuvable : vérifiez l\'adresse d\'envoi dans les paramètres.';
+  return e.message||(e.http?'erreur '+e.http:'envoi impossible');
 }
 async function dioSend(id,force,btn){
   btn.disabled=true;const old=btn.textContent;btn.textContent='Envoi en cours…';
@@ -1456,12 +1462,19 @@ async function dioSend(id,force,btn){
   catch(e){btn.disabled=false;btn.textContent=old;toast('Connexion perdue : rien n\'a été envoyé.');return}
   const v=S.ventes.find(x=>x.id===id);
   if(j.dioptra&&v){v.dioptra=j.dioptra;window.PrismeaSync.applyRemote('ventes',id,j.vente||v,false)}
-  if(r.ok)toast('Facture envoyée à DIOPTRA');
+  if(r.ok)toast(force?'Livraison mise à jour dans DIOPTRA':'Facture envoyée à DIOPTRA');
   else if(j.error==='magasin_manquant')toast('Renseignez le magasin DIOPTRA dans la fiche du client.');
   else if(j.error==='non_configure')toast('Réglez la connexion DIOPTRA dans les Paramètres.');
-  else if(j.error==='deja_envoye')toast('Cette facture a déjà été envoyée.');
-  else toast('Envoi refusé : '+(j.dioptra&&j.dioptra.erreur?dioMsg(j.dioptra.erreur):dioMsg({http:r.status,message:j.message})));
+  else if(r.status===409)toast('Déjà réceptionnée dans DIOPTRA : la facture ne peut plus être renvoyée.');
+  else toast('Envoi refusé : '+dioMsg(j.dioptra&&j.dioptra.erreur?j.dioptra.erreur:{http:j.http||r.status,message:j.message}));
   if(!$('#modal').hidden)venteDetail(id,'facture');
+}
+async function dioDownload(id){
+  const v=S.ventes.find(x=>x.id===id);if(!v)return;
+  try{await window.PrismeaSync.flush()}catch(e){}
+  try{const r=await fetch('/api/dioptra/payload/'+encodeURIComponent(id),{credentials:'same-origin'});if(!r.ok)throw 0;const p=await r.json();
+    offerFile(`DIOPTRA ${v.facture||v.num}.json`,JSON.stringify(p,null,2))}
+  catch(e){toast('Le fichier n\'a pas pu être préparé, réessayez.')}
 }
 function viewParametres(){
   const s=S.societe,v=k=>esc(s[k]??'');
@@ -1648,7 +1661,8 @@ document.addEventListener('click',e=>{
       v.expedition=e;save();render();venteDetail(id,'expedition');toast('Expédition enregistrée');
       if(e.suivi&&(e.transporteur||'DHL')==='DHL'&&window.__PRISMEA__.dhl&&(!e.dhl||old.suivi!==e.suivi))dhlRefresh(id);break}
     case'vd-dhl':dhlRefresh(id);break;
-    case'dio-send':{const force=!!b.dataset.force;if(force&&!b.dataset.sure){b.dataset.sure='1';b.textContent='Confirmer le renvoi';break}dioSend(id,force,b);break}
+    case'dio-send':dioSend(id,!!b.dataset.force,b);break;
+    case'dio-dl':dioDownload(id);break;
     case'vd-docdel':{
       if(!b.dataset.sure){b.dataset.sure='1';b.textContent='Confirmer';break}
       const v=S.ventes.find(x=>x.id===id),did=b.dataset.doc;if(!v)break;

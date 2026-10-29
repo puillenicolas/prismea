@@ -89,7 +89,7 @@ async function send(venteId, { force, user }) {
   if (!v) return { status: 404, body: { error: 'vente_introuvable' } };
   const c = await entity('clients', v.clientId);
   if (!c || !String(c.dioptraMagasin || '').trim()) return { status: 400, body: { error: 'magasin_manquant' } };
-  if (v.dioptra && v.dioptra.statut === 'envoye' && !force) return { status: 409, body: { error: 'deja_envoye', dioptra: v.dioptra } };
+  if (v.dioptra && v.dioptra.statut === 'receptionnee') return { status: 409, body: { error: 'deja_receptionnee', dioptra: v.dioptra } };
   const meta = await entity('meta', 'societe');
   const ids = [...new Set(v.lignes.map(l => l.montureId))];
   const { rows } = await pool.query("select id,data from entities where kind='montures' and id = any($1)", [ids]);
@@ -115,15 +115,35 @@ async function send(venteId, { force, user }) {
   const ok = http >= 200 && http < 300;
   const now = new Date().toISOString();
   const prev = v.dioptra || {};
-  const dioptra = ok
-    ? { statut: 'envoye', le: now, par: user.nom, http, ref: String((reponse && (reponse.id || reponse.reference || reponse.livraison || reponse.numero)) || ''), magasin: payload.magasin, lignes: payload.lignes.length, envois: (prev.envois || 0) + 1 }
-    : { ...(prev.statut === 'envoye' ? prev : {}), statut: prev.statut === 'envoye' ? 'envoye' : 'erreur', erreur: { le: now, par: user.nom, http, message: String(message || 'Erreur ' + http).slice(0, 300) } };
+  let dioptra;
+  if (ok) {
+    const { erreur, ...rest } = prev;
+    dioptra = { ...rest, statut: 'envoye', le: now, par: user.nom, http, ref: String((reponse && (reponse.id || reponse.reference || reponse.livraison || reponse.numero)) || ''),
+      etat: (reponse && reponse.etat) || '', magasin: payload.magasin, lignes: payload.lignes.length, articles: payload.lignes.reduce((a, l) => a + l.qte, 0), envois: (prev.envois || 0) + 1 };
+  } else if (http === 409) {
+    /* déjà réceptionnée dans DIOPTRA : plus de renvoi possible */
+    dioptra = { ...prev, statut: 'receptionnee', receptionLe: now, ref: prev.ref || String((reponse && reponse.id) || ''), erreur: undefined, message: String(message || '').slice(0, 300) };
+    delete dioptra.erreur;
+  } else {
+    dioptra = { ...prev, statut: prev.statut === 'envoye' ? 'envoye' : 'erreur', erreur: { le: now, par: user.nom, http, message: String(message || (http ? 'Erreur ' + http : 'Envoi impossible')).slice(0, 300) } };
+  }
   /* écrit sur la vente (le navigateur la reçoit par la synchronisation) */
   await pool.query(
     "update entities set data = jsonb_set(data, '{dioptra}', $3::jsonb, true), updated_at=clock_timestamp(), updated_by=$4 where kind=$1 and id=$2",
     ['ventes', venteId, JSON.stringify(dioptra), user.id]);
   const nv = await entity('ventes', venteId);
-  return { status: ok ? 200 : 502, body: { ok, dioptra, vente: nv, http, message } };
+  return { status: ok ? 200 : (http === 409 ? 409 : 502), body: { ok, dioptra, vente: nv, http, message } };
 }
 
-module.exports = { publicConfig, saveConfig, send, buildPayload, DEFAULT_URL };
+/* Le même JSON, pour un téléchargement (import manuel dans DIOPTRA) */
+async function payloadFor(venteId) {
+  const v = await entity('ventes', venteId);
+  if (!v) return null;
+  const c = (await entity('clients', v.clientId)) || {};
+  const meta = await entity('meta', 'societe');
+  const ids = [...new Set(v.lignes.map(l => l.montureId))];
+  const { rows } = await pool.query("select id,data from entities where kind='montures' and id = any($1)", [ids]);
+  return buildPayload(v, c, meta && meta.v, new Map(rows.map(r => [r.id, r.data])));
+}
+
+module.exports = { publicConfig, saveConfig, send, buildPayload, payloadFor, DEFAULT_URL };
