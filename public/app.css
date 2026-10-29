@@ -398,3 +398,15 @@ td s.muted{font-size:12px}
 .dio-box{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;margin-top:16px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2)}
 .dio-txt{display:flex;flex-direction:column;gap:3px;min-width:0;font-size:14px}
 .dio-ok{font-weight:600;color:var(--ok)}
+
+/* Étiquettes */
+.etq-grid{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:20px;align-items:start}
+.etq-side{display:flex;flex-direction:column;gap:14px}
+.etq-perso{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.etq-sheet{display:grid;gap:2px;margin:6px 0 4px;padding:6px;border:1px solid var(--line);border-radius:6px;background:#fff;max-width:200px;aspect-ratio:210/297}
+.etq-cell{border:1px solid var(--line);border-radius:2px;background:var(--surface-2);padding:0;min-height:0;cursor:pointer}
+.etq-cell.used{background:repeating-linear-gradient(45deg,#ddd 0 2px,#f4f4f4 2px 5px)}
+.etq-cell.fill{background:var(--accent);border-color:var(--accent)}
+.etq-count{margin:0;font-size:14px}
+.lbl-s{font-size:13px;font-weight:600}
+@media (max-width:760px){.etq-grid{grid-template-columns:1fr}}

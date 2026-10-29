@@ -517,7 +517,7 @@ function viewStock(){
   }
   return`<a class="back" href="#">← Accueil</a>
   <div class="head"><div><h1>Stock</h1><p>${nb} monture${nb>1?'s':''} en stock · ${money(val)} au prix d'achat${alertes?` · <span class="warn-txt">${alertes} en alerte</span>`:''}</p></div>
-    <div class="row-btns"><a class="btn" href="#catalogue">${ICO_IMPORT} Importer un catalogue</a><button class="btn" data-act="s-new">Nouvelle monture</button><a class="btn primary" href="#entree">Entrée de stock</a></div></div>
+    <div class="row-btns"><a class="btn" href="#catalogue">${ICO_IMPORT} Importer un catalogue</a><button class="btn" data-act="etq-new">Imprimer des étiquettes</button><button class="btn" data-act="s-new">Nouvelle monture</button><a class="btn primary" href="#entree">Entrée de stock</a></div></div>
   <div class="tabs" role="tablist">${tab('montures','Montures',S.montures.length)}${tab('receptions','Entrées de stock',S.receptions.length)}${tab('marques','Marques et coefficients',S.marques.length)}${tab('fournisseurs','Fournisseurs',S.fournisseurs.length)}</div>${body}`;
 }
 function fillStock(){
@@ -565,7 +565,7 @@ function montureForm(m,onSaved){
     <label class="check full" id="m-manwrap"><input type="checkbox" id="m-man" ${m.pvManuel?'checked':''}> Fixer le prix de vente à la main pour cette monture</label>
     ${isNew?'':`<label>Stock compté<input id="m-qte" type="number" value="${m.qte}"><span class="hint">Pour corriger après un inventaire</span></label>`}
   </fieldset>`,
-  `${isNew?'':`<button class="btn danger" data-act="s-del" data-id="${m.id}" style="margin-right:auto">Supprimer</button>`}<button class="btn" data-act="close">Annuler</button><button class="btn primary" id="m-ok">${onSaved?'Enregistrer et ajouter':'Enregistrer'}</button>`,()=>{
+  `${isNew?'':`<button class="btn danger" data-act="s-del" data-id="${m.id}" style="margin-right:auto">Supprimer</button><button class="btn" data-act="etq-one" data-id="${m.id}">Étiquettes</button>`}<button class="btn" data-act="close">Annuler</button><button class="btn primary" id="m-ok">${onSaved?'Enregistrer et ajouter':'Enregistrer'}</button>`,()=>{
     (isNew&&m.ean?$('#m-marque'):$('#m-ean')).focus();
     const bindPh=()=>{
       const pick=async inp=>{const f=inp.files[0];if(!f)return;$('#m-phmsg').textContent='Envoi de la photo…';
@@ -676,6 +676,7 @@ async function validateRec(){
     total:r2(lignes.reduce((t,l)=>t+l.qte*l.pa,0))};
   S.receptions.push(r);save();rec=null;stockTab='receptions';location.hash='stock';
   toast(`Entrée ${r.num} validée : ${r.lignes.reduce((t,l)=>t+l.qte,0)} montures ajoutées au stock`);
+  setTimeout(()=>labelDialog(r.lignes.map(l=>({montureId:l.montureId,qte:l.qte})),'Étiquettes de l\'entrée '+r.num),60);
 }
 function showRec(id){
   const r=S.receptions.find(x=>x.id===id);if(!r)return;
@@ -683,7 +684,108 @@ function showRec(id){
   `<div class="table-wrap"><table><thead><tr><th>Monture</th><th class="num">Qté</th><th class="num">Prix d'achat HT</th><th class="num">Montant HT</th></tr></thead><tbody>
   ${r.lignes.map(l=>`<tr><td><b>${esc(l.designation)}</b><span class="sub"><span class="mono">${esc(l.etiquette)}</span>${l.detail?' · '+esc(l.detail):''}</span></td><td class="num">${l.qte}</td><td class="num">${money(l.pa)}</td><td class="num">${money(l.qte*l.pa)}</td></tr>`).join('')}
   </tbody></table></div><dl class="totals" style="max-width:260px;margin-left:auto"><dt class="big">Total HT</dt><dd class="big">${money(r.total)}</dd></dl>`,
-  `<button class="btn primary" data-act="close">Fermer</button>`);
+  `<button class="btn" data-act="etq-rec" data-id="${r.id}">Imprimer les étiquettes</button><button class="btn primary" data-act="close">Fermer</button>`);
+}
+
+/* ---------- Étiquettes sur planches A4 ----------
+   Code-barres Code 128 du code étiquette (OZE001…), lisible par la douchette pour la vente.
+   Les planches sont centrées sur la feuille ; un décalage en mm permet d'ajuster à l'imprimante. */
+const ETQ_FORMATS={
+  a65:{nom:'65 par planche · 38,1 × 21,2 mm (Avery L7651 / 3666)',cols:5,rows:13,w:38.1,h:21.2,gx:2.5,gy:0},
+  a40:{nom:'40 par planche · 45,7 × 25,4 mm (Avery L7654)',cols:4,rows:10,w:45.7,h:25.4,gx:2.5,gy:0},
+  a21:{nom:'21 par planche · 63,5 × 38,1 mm (Avery L7160)',cols:3,rows:7,w:63.5,h:38.1,gx:2.5,gy:0},
+  a24:{nom:'24 par planche · 70 × 37 mm (Avery 3474)',cols:3,rows:8,w:70,h:37,gx:0,gy:0},
+  perso:{nom:'Autre format (à mesurer sur la planche)'}
+};
+const JSBARCODE='https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.6/JsBarcode.all.min.js';let jsbReady=null;
+function loadJsBarcode(){
+  if(window.JsBarcode)return Promise.resolve(window.JsBarcode);
+  if(!jsbReady)jsbReady=new Promise((ok,ko)=>{const s=document.createElement('script');s.src=JSBARCODE;s.onload=()=>ok(window.JsBarcode);s.onerror=()=>{jsbReady=null;ko(new Error('jsbarcode'))};document.head.appendChild(s)});
+  return jsbReady;
+}
+const etqCfg=()=>{const c=S.societe.etq||{};return{format:c.format||'a65',prix:!!c.prix,dx:+c.dx||0,dy:+c.dy||0,perso:{cols:3,rows:8,w:70,h:37,gx:0,gy:0,...(c.perso||{})}}};
+const fmtOf=cfg=>cfg.format==='perso'?{...cfg.perso,nom:ETQ_FORMATS.perso.nom}:ETQ_FORMATS[cfg.format]||ETQ_FORMATS.a65;
+function labelsPDF(list,cfg,start){
+  const JsB=window.JsBarcode,{jsPDF}=window.jspdf,f=fmtOf(cfg),per=f.cols*f.rows;
+  const pdf=new jsPDF({unit:'mm',format:'a4'});
+  const t=s=>String(s??'').replace(/[  ]/g,' ').replace(/□/g,'/').replace(/[−–]/g,'-');
+  const L0=(210-f.cols*f.w-(f.cols-1)*f.gx)/2+cfg.dx,T0=(297-f.rows*f.h-(f.rows-1)*f.gy)/2+cfg.dy;
+  const k=Math.max(0.8,Math.min(1.6,f.h/21.2)),pad=Math.min(2,f.w*0.05);
+  const fit=(s,max)=>{s=t(s);if(pdf.getTextWidth(s)<=max)return s;while(s.length>1&&pdf.getTextWidth(s+'…')>max)s=s.slice(0,-1);return s+'…'};
+  const bars=new Map();
+  list.forEach((m,i)=>{
+    const pos=start-1+i,cell=pos%per;if(i>0&&cell===0)pdf.addPage();
+    const col=cell%f.cols,x=L0+col*(f.w+f.gx),y=T0+Math.floor(cell/f.cols)*(f.h+f.gy);
+    /* planches sans marge (bord à bord) : on s'écarte de la zone non imprimable de l'imprimante (~4 mm) */
+    const pl=col===0&&L0<4?Math.max(pad,4.5-L0):pad,pr=col===f.cols-1&&L0<4?Math.max(pad,4.5-L0):pad,W=f.w-pl-pr;
+    let cy=y+pad;
+    // ligne 1 : code étiquette (+ prix)
+    const fs1=7.5*k;pdf.setFont('helvetica','bold');pdf.setFontSize(fs1);cy+=fs1*0.3528;
+    pdf.text(t(m.etiquette),x+pl,cy);
+    if(cfg.prix&&m.pv){const px=t(money(m.pv))+' HT';pdf.setFont('helvetica','normal');pdf.setFontSize(fs1*0.85);pdf.text(px,x+f.w-pr,cy,{align:'right'})}
+    // code-barres
+    if(!bars.has(m.etiquette)){const o={};JsB(o,String(m.etiquette),{format:'CODE128'});bars.set(m.etiquette,o.encodings.map(e=>e.data).join(''))}
+    const bits=bars.get(m.etiquette),mw=Math.min(0.5,(W-2)/bits.length),bw=bits.length*mw,bh=Math.max(5,f.h*0.36);
+    cy+=0.9*k;let bx=x+pl+(W-bw)/2;pdf.setFillColor(0,0,0);
+    for(let j=0;j<bits.length;){if(bits[j]==='1'){let n=1;while(bits[j+n]==='1')n++;pdf.rect(bx+j*mw,cy,n*mw,bh,'F');j+=n}else j++}
+    cy+=bh;
+    // lignes 2 et 3 : modèle, coloris et taille
+    const fs2=5.8*k;pdf.setFont('helvetica','bold');pdf.setFontSize(fs2);cy+=fs2*0.3528+0.7*k;
+    pdf.text(fit(desig(m),W),x+pl,cy);
+    pdf.setFont('helvetica','normal');cy+=fs2*0.3528+0.3*k;
+    pdf.text(fit([m.coloris,tailleOf(m)].filter(Boolean).join(' · '),W),x+pl,cy);
+  });
+  return pdf.output('arraybuffer');
+}
+/* Fenêtre « Imprimer les étiquettes » : liste montures × quantités, format, position de départ */
+let etq=null;
+function labelDialog(items,titre){
+  etq={items:items.filter(x=>mon(x.montureId)).map(x=>({montureId:x.montureId,qte:Math.max(0,Math.round(x.qte||0))})),start:1,titre:titre||'Imprimer des étiquettes'};
+  openModal(etq.titre,'Planches A4 d\'étiquettes adhésives','<div id="etq-body"></div>',
+    `<button class="btn" data-act="close">Fermer</button><button class="btn primary" id="etq-go">Télécharger les étiquettes (PDF)</button>`,()=>{$('.modal-card').classList.add('wide');drawEtq()});
+}
+function drawEtq(){
+  const box=$('#etq-body');if(!box||!etq)return;const cfg=etqCfg(),f=fmtOf(cfg),per=f.cols*f.rows;
+  const n=etq.items.reduce((t,x)=>t+x.qte,0);if(etq.start>per)etq.start=1;
+  const sheets=n?Math.ceil((etq.start-1+n)/per):0;
+  const cells=Array.from({length:per},(_,i)=>{const used=i<etq.start-1,fill=!used&&i<etq.start-1+n;return`<button type="button" class="etq-cell${used?' used':''}${fill?' fill':''}" data-act="etq-start" data-i="${i+1}" title="Commencer à l'étiquette ${i+1}" aria-label="Commencer à l'étiquette ${i+1}"></button>`}).join('');
+  box.innerHTML=`<div class="etq-grid">
+   <div>
+    <div class="scan-row" style="margin-bottom:10px"><input id="etq-scan" placeholder="Ajouter une monture (scan ou code), puis Entrée" autocomplete="off"></div>
+    <div class="table-wrap"><table><thead><tr><th>Monture</th><th style="width:150px">Étiquettes</th><th></th></tr></thead><tbody>
+    ${etq.items.length?etq.items.map((x,i)=>{const m=mon(x.montureId);return`<tr><td><div class="with-thumb">${thumb(m,'sm')}<div><b>${esc(desig(m))}</b><span class="sub"><span class="mono">${esc(m.etiquette)}</span> · ${esc([m.coloris,tailleOf(m)].filter(Boolean).join(' · '))}</span></div></div></td>
+      <td><div class="qty"><button data-act="etq-q" data-i="${i}" data-d="-1" aria-label="Diminuer">−</button><input type="number" min="0" data-etqq="${i}" value="${x.qte}" aria-label="Nombre d'étiquettes"><button data-act="etq-q" data-i="${i}" data-d="1" aria-label="Augmenter">+</button></div></td>
+      <td><button class="icon-btn" data-act="etq-rm" data-i="${i}" aria-label="Retirer">×</button></td></tr>`}).join(''):'<tr><td colspan="3"><p class="muted" style="margin:10px 0">Scannez ou saisissez les montures à étiqueter.</p></td></tr>'}
+    </tbody></table></div>
+   </div>
+   <aside class="etq-side">
+    <label>Format de planche<select id="etq-fmt">${Object.entries(ETQ_FORMATS).map(([k,v])=>`<option value="${k}" ${k===cfg.format?'selected':''}>${esc(v.nom)}</option>`).join('')}</select></label>
+    ${cfg.format==='perso'?`<div class="etq-perso">${[['cols','Colonnes',1],['rows','Lignes',1],['w','Largeur mm',0.1],['h','Hauteur mm',0.1],['gx','Écart horizontal mm',0.1],['gy','Écart vertical mm',0.1]].map(([k,l,st])=>`<label>${l}<input type="number" min="0" step="${st}" data-etqp="${k}" value="${cfg.perso[k]}"></label>`).join('')}</div>`:''}
+    <label class="check"><input type="checkbox" id="etq-prix" ${cfg.prix?'checked':''}> Afficher le prix de vente HT</label>
+    <div><span class="lbl-s">Première étiquette libre sur la planche</span>
+     <div class="etq-sheet" style="grid-template-columns:repeat(${f.cols},1fr)">${cells}</div>
+     <span class="hint">Cliquez sur la première case libre pour réutiliser une planche entamée.</span></div>
+    <details class="hint"><summary>Ajuster à l'imprimante</summary><div class="etq-perso"><label>Décalage horizontal<span class="suffix"><input type="number" step="0.5" id="etq-dx" value="${cfg.dx}"><span>mm</span></span></label><label>Décalage vertical<span class="suffix"><input type="number" step="0.5" id="etq-dy" value="${cfg.dy}"><span>mm</span></span></label></div><p>Imprimez à <b>taille réelle (100 %)</b>, sans « ajuster à la page ». Si le texte est décalé sur toutes les étiquettes, corrigez ici (valeur positive = vers la droite / vers le bas).</p></details>
+    <p class="etq-count"><b>${n}</b> étiquette${n>1?'s':''} · ${sheets} planche${sheets>1?'s':''}</p>
+   </aside></div>`;
+  const go=$('#etq-go');if(go){go.disabled=!n;go.onclick=etqPrint}
+  const sc=$('#etq-scan');sc.onkeydown=e=>{if(e.key!=='Enter')return;e.preventDefault();const m=findMonture(sc.value);if(!m){toast('Aucune monture ne correspond à « '+sc.value+' »');sc.select();return}
+    const x=etq.items.find(y=>y.montureId===m.id);if(x)x.qte++;else etq.items.push({montureId:m.id,qte:1});drawEtq();$('#etq-scan').focus()};
+  const setCfg=fn=>{const c=etqCfg();fn(c);S.societe.etq={format:c.format,prix:c.prix,dx:c.dx,dy:c.dy,perso:c.perso};save();drawEtq()};
+  $('#etq-fmt').onchange=e=>setCfg(c=>{c.format=e.target.value});
+  $('#etq-prix').onchange=e=>setCfg(c=>{c.prix=e.target.checked});
+  ['dx','dy'].forEach(k=>{$('#etq-'+k).onchange=e=>setCfg(c=>{c[k]=r2(+e.target.value||0)})});
+  box.querySelectorAll('[data-etqp]').forEach(i=>i.onchange=()=>setCfg(c=>{c.perso[i.dataset.etqp]=Math.max(0,+i.value||0);if(['cols','rows'].includes(i.dataset.etqp))c.perso[i.dataset.etqp]=Math.max(1,Math.round(c.perso[i.dataset.etqp]))}));
+  box.querySelectorAll('[data-etqq]').forEach(i=>i.onchange=()=>{etq.items[+i.dataset.etqq].qte=Math.max(0,Math.round(+i.value||0));drawEtq()});
+}
+async function etqPrint(){
+  if(!etq)return;const list=[];etq.items.forEach(x=>{const m=mon(x.montureId);for(let i=0;i<x.qte;i++)list.push(m)});if(!list.length)return;
+  if(!window.jspdf){toast('Le module PDF n\'a pas pu se charger. Vérifiez la connexion internet.');return}
+  const b=$('#etq-go');b.disabled=true;b.textContent='Préparation…';
+  try{await loadJsBarcode();const data=labelsPDF(list,etqCfg(),etq.start);
+    await offerFile(`Etiquettes ${list.length} - ${isoD(new Date())}.pdf`,data)}
+  catch(e){toast('Les étiquettes n\'ont pas pu être préparées. Vérifiez la connexion internet.')}
+  b.disabled=false;b.textContent='Télécharger les étiquettes (PDF)';
 }
 
 /* ---------- Marques et fournisseurs ---------- */
@@ -1079,6 +1181,12 @@ document.addEventListener('click',e=>{
   const setRq=(v,rel)=>{const l=rec.lignes.find(x=>x.montureId===id);if(!l)return;const q=rel?l.qte+v:v;if(q<=0)rec.lignes=rec.lignes.filter(x=>x!==l);else l.qte=q;drawRec()};
   switch(b.dataset.act){
     case's-tab':stockTab=b.dataset.k;render();break;
+    case'etq-new':labelDialog([]);setTimeout(()=>$('#etq-scan')?.focus(),50);break;
+    case'etq-rec':{const r=S.receptions.find(x=>x.id===id);if(r)labelDialog(r.lignes.map(l=>({montureId:l.montureId,qte:l.qte})),'Étiquettes de l\'entrée '+r.num);break}
+    case'etq-one':{const m=mon(id);if(m)labelDialog([{montureId:m.id,qte:Math.max(1,m.qte)}],'Étiquettes '+m.etiquette);break}
+    case'etq-start':if(etq){etq.start=+b.dataset.i;drawEtq()}break;
+    case'etq-q':if(etq){const x=etq.items[+b.dataset.i];x.qte=Math.max(0,x.qte+(+b.dataset.d));drawEtq()}break;
+    case'etq-rm':if(etq){etq.items.splice(+b.dataset.i,1);drawEtq()}break;
     case'etq-renum':{const n=oldCodes().length,ex=oldCodes()[0];
       openModal('Nouveaux codes étiquette',`${n} monture${n>1?'s':''} concernée${n>1?'s':''}`,`<p>Chaque ancienne monture recevra un code « 3 lettres de la marque + 3 chiffres », par exemple <b class="mono">${esc(ex.etiquette)}</b> → <b class="mono">${esc(prefixOf(ex.marque))}…</b>.</p><p>Les ventes, devis et entrées de stock passés afficheront le nouveau code. <b>Pensez à réimprimer les étiquettes</b> déjà collées sur les montures en stock : les anciens codes ne seront plus reconnus au scan (le code-barres EAN reste valable).</p>`,
         `<button class="btn" data-act="close">Annuler</button><button class="btn primary" id="renum-ok">Changer les codes</button>`,()=>{$('#renum-ok').onclick=async e2=>{e2.target.disabled=true;try{const k=await renumberOld();closeModal();render();toast(`${k} code${k>1?'s':''} étiquette mis à jour`)}catch(x){e2.target.disabled=false;toast('Connexion perdue : réessayez.')}}});
