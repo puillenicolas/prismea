@@ -324,7 +324,7 @@ function viewDoc(kind,clientId){
 function drawDoc(){
   const body=$('#doc-lines');if(!body||!doc)return;
   body.innerHTML=doc.lignes.length?doc.lignes.map(l=>{const m=mon(l.montureId);const over=doc.kind==='vente'&&m&&l.qte>m.qte;return`<tr>
-    <td><b>${esc(l.designation)}</b><span class="sub"><span class="mono">${esc(m?m.etiquette:l.etiquette)}</span> · ${esc(l.detail)}${over?` · <span class="warn-txt">${m.qte} en stock</span>`:''}</span></td>
+    <td><div class="with-thumb">${thumb(m,'sm')}<div><b>${esc(l.designation)}</b><span class="sub"><span class="mono">${esc(m?m.etiquette:l.etiquette)}</span> · ${esc(l.detail)}${over?` · <span class="warn-txt">${m.qte} en stock</span>`:''}</span></div></div></td>
     <td><div class="qty"><button data-act="dq-" data-id="${l.montureId}" aria-label="Diminuer">−</button><input id="dq-${l.montureId}" type="number" min="1" data-dq="${l.montureId}" value="${l.qte}" aria-label="Quantité"><button data-act="dq+" data-id="${l.montureId}" aria-label="Augmenter">+</button></div></td>
     <td class="num">${remL(l)?`<s class="muted">${money(l.pu)}</s><br>${money(puNet(l))}`:money(l.pu)}</td>
     <td><span class="rem-box"><input type="number" min="0" ${isE(l.remT)?`max="${l.pu}" step="0.01"`:'max="100" step="0.5"'} data-drem="${l.montureId}" value="${remL(l)||''}" placeholder="0" aria-label="Remise sur ${esc(l.designation)} ${isE(l.remT)?'en euros par monture':'en pourcentage'}"><button type="button" class="unit-tg" data-act="drem-u" data-id="${l.montureId}" title="Passer la remise ${isE(l.remT)?'en %':'en € par monture'}" aria-label="Unité de la remise : ${isE(l.remT)?'euros, passer en pourcentage':'pourcentage, passer en euros'}">${isE(l.remT)?'€':'%'}</button></span></td>
@@ -401,6 +401,34 @@ function showDoc(id){
 
 /* ---------- Stock ---------- */
 S.catalogue=S.catalogue||[];S.receptions=S.receptions||[];S.seqR=S.seqR||0;S.coefs=S.coefs||{};
+/* ---------- Photos des montures ----------
+   S.photos : photos rattachées à un code EAN (pack photos du fournisseur), valables aussi pour les futures fiches.
+   m.photo : photo propre à la monture (prise à la réception) ; null = photo retirée volontairement. */
+S.photos=S.photos||[];
+const photoByEAN=()=>{const x=new Map();S.photos.forEach(p=>x.set(normEAN(p.ean),p.file));return x};
+let photoIdx=null,photoIdxN=-1;
+function photoOf(m){
+  if(!m)return'';if(m.photo===null)return'';if(m.photo)return m.photo;
+  if(photoIdxN!==S.photos.length||!photoIdx){photoIdx=photoByEAN();photoIdxN=S.photos.length}
+  return m.ean?photoIdx.get(normEAN(m.ean))||'':'';
+}
+const ICO_FRAME='<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="6.5" cy="13" r="3.8"/><circle cx="17.5" cy="13" r="3.8"/><path d="M10.3 12.4c1-.8 2.4-.8 3.4 0M2.7 12.2 1.5 9.5M21.3 12.2l1.2-2.7"/></svg>';
+const thumb=(m,cls='')=>{const f=photoOf(m);return f?`<img class="thumb ${cls}" src="/api/files/${esc(f)}" alt="" loading="lazy" decoding="async" data-zoom="${esc(m.id)}" title="Agrandir la photo">`:`<span class="thumb empty ${cls}" aria-hidden="true">${ICO_FRAME}</span>`};
+/* Réduction avant envoi : 900 px de large au plus, JPEG ~80 % (≈ 50 à 90 Ko par photo) */
+async function shrinkImage(blob){
+  let bmp;try{bmp=await createImageBitmap(blob)}catch(e){return null}
+  const k=Math.min(1,900/Math.max(bmp.width,bmp.height)),w=Math.round(bmp.width*k),h=Math.round(bmp.height*k);
+  const cv=document.createElement('canvas');cv.width=w;cv.height=h;const g=cv.getContext('2d');g.fillStyle='#fff';g.fillRect(0,0,w,h);g.drawImage(bmp,0,0,w,h);bmp.close&&bmp.close();
+  return await new Promise(ok=>cv.toBlob(ok,'image/jpeg',0.82));
+}
+async function uploadPhoto(blob,name){
+  const small=await shrinkImage(blob);if(!small)throw new Error('image');
+  const r=await fetch('/api/files',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'image/jpeg','X-Filename':encodeURIComponent(name||'photo.jpg')},body:small});
+  if(!r.ok)throw new Error('upload');return(await r.json()).id;
+}
+const dropFile=id=>{if(id)fetch('/api/files/'+encodeURIComponent(id),{method:'DELETE',credentials:'same-origin'}).catch(()=>{})};
+function photoView(m){const f=photoOf(m);if(!f)return;openModal(desig(m),[m.coloris,m.etiquette].filter(Boolean).join(' · '),`<img class="photo-big" src="/api/files/${esc(f)}" alt="${esc(desig(m)+' '+(m.coloris||''))}">`,`<button class="btn primary" data-act="close">Fermer</button>`);$('.modal-card').classList.add('wide')}
+
 /* Coefficient par marque : prix de vente HT = prix d'achat HT × coefficient (sauf prix fixé à la main) */
 S.marques=S.marques||[];S.fournisseurs=S.fournisseurs||[];S.seqF=S.seqF||0;
 const marqueOfName=nom=>S.marques.find(b=>b.nom.toLowerCase()===String(nom||'').trim().toLowerCase());
@@ -471,7 +499,7 @@ function viewStock(){
     <select id="ff" aria-label="Fournisseur"><option value="">Tous les fournisseurs</option>${[...S.fournisseurs].sort((a,b)=>a.nom.localeCompare(b.nom,'fr')).map(f=>`<option value="${f.id}">${esc(f.nom)}</option>`).join('')}</select>
     <select id="fm" aria-label="Marque"><option value="">Toutes les marques</option>${marques.map(m=>`<option>${esc(m)}</option>`).join('')}</select>
     <select id="fa" aria-label="Niveau de stock"><option value="">Tous les niveaux</option><option value="1">En alerte ou en rupture</option></select></div>
-    <div class="table-wrap"><table><thead><tr><th>Étiquette</th><th>Monture</th><th>Taille</th><th>EAN</th><th class="num">Prix d'achat HT</th><th class="num">Prix de vente HT</th><th class="num">Stock</th></tr></thead><tbody id="srows"></tbody></table></div><span class="count" id="scount"></span>`
+    <div class="table-wrap"><table><thead><tr><th class="th-thumb"><span class="sr">Photo</span></th><th>Étiquette</th><th>Monture</th><th>Taille</th><th>EAN</th><th class="num">Prix d'achat HT</th><th class="num">Prix de vente HT</th><th class="num">Stock</th></tr></thead><tbody id="srows"></tbody></table></div><span class="count" id="scount"></span>`
     :`<div class="table-wrap"><div class="empty-state"><h3>Aucune monture en stock</h3><p>Importez le catalogue d'une marque, puis scannez les pochettes à la réception : les fiches se remplissent toutes seules.</p><div class="row-btns"><a class="btn" href="#catalogue">${ICO_IMPORT} Importer un catalogue</a><a class="btn primary" href="#entree">Entrée de stock</a></div></div></div>`;
   else if(stockTab==='marques')body=marquesTab();
   else if(stockTab==='fournisseurs')body=fournisseursTab();
@@ -491,8 +519,8 @@ function fillStock(){
   const q=($('#qs')?.value||'').toLowerCase().trim(),fm=$('#fm')?.value||'',fa=$('#fa')?.value||'',ff=$('#ff')?.value||'',qe=normEAN(q);
   const list=S.montures.filter(m=>(!fm||m.marque===fm)&&(!ff||(marqueOfName(m.marque)||{}).fournisseurId===ff)&&(!fa||m.qte<=m.seuil)&&(!q||[m.etiquette,m.marque,m.modele,m.coloris].join(' ').toLowerCase().includes(q)||(qe.length>=4&&normEAN(m.ean).includes(qe))))
     .sort((a,b)=>(a.marque+a.modele+a.coloris).localeCompare(b.marque+b.modele+b.coloris,'fr'));
-  b.innerHTML=list.length?list.map(m=>`<tr class="row-link" data-mid="${m.id}" tabindex="0"><td class="mono">${esc(m.etiquette)}</td><td><b>${esc(desig(m))}</b><span class="sub">${esc(m.coloris||'')}</span></td><td class="mono">${esc(tailleOf(m))}</td><td class="mono sub-cell">${esc(fmtEAN(m.ean))}</td><td class="num">${money(m.pa)}</td><td class="num">${money(m.pv)}</td><td class="num">${stockState(m)}</td></tr>`).join('')
-    :'<tr><td colspan="7"><div class="empty-state" style="padding:32px 12px"><p>Aucune monture ne correspond.</p></div></td></tr>';
+  b.innerHTML=list.length?list.map(m=>`<tr class="row-link" data-mid="${m.id}" tabindex="0"><td class="td-thumb">${thumb(m)}</td><td class="mono">${esc(m.etiquette)}</td><td><b>${esc(desig(m))}</b><span class="sub">${esc(m.coloris||'')}</span></td><td class="mono">${esc(tailleOf(m))}</td><td class="mono sub-cell">${esc(fmtEAN(m.ean))}</td><td class="num">${money(m.pa)}</td><td class="num">${money(m.pv)}</td><td class="num">${stockState(m)}</td></tr>`).join('')
+    :'<tr><td colspan="8"><div class="empty-state" style="padding:32px 12px"><p>Aucune monture ne correspond.</p></div></td></tr>';
   $('#scount').textContent=`${list.length} référence${list.length>1?'s':''} sur ${S.montures.length}`;
 }
 
@@ -501,7 +529,15 @@ function montureForm(m,onSaved){
   const isNew=!m||!m.id;m=m||{};
   const v=k=>esc(m[k]??'');
   const marques=S.marques.map(b=>b.nom).sort((a,b)=>a.localeCompare(b,'fr'));
+  let ph={file:m.photo,changed:false};
+  const phHtml=()=>{const f=ph.changed?ph.file:photoOf(m);const fromPack=!ph.changed&&!m.photo&&f;
+    return`<div class="photo-box">${f?`<img src="/api/files/${esc(f)}" alt="Photo de la monture">`:`<span class="photo-empty">${ICO_FRAME}<span>Pas de photo</span></span>`}
+    <div class="photo-acts"><label class="btn small" for="m-cam">${f?'Reprendre la photo':'Prendre une photo'}<input id="m-cam" type="file" accept="image/*" capture="environment" hidden></label>
+    <label class="btn small ghost" for="m-pic">Choisir une image<input id="m-pic" type="file" accept="image/jpeg,image/png,image/webp" hidden></label>
+    ${f?'<button type="button" class="link danger-link" id="m-phdel">Retirer la photo</button>':''}
+    <span class="hint" id="m-phmsg">${fromPack?'Photo du pack fournisseur (liée au code EAN)':''}</span></div></div>`};
   openModal(isNew?'Nouvelle monture':desig(m),isNew?(m.ean?'Code-barres '+m.ean+' inconnu : complétez la fiche une seule fois':''):m.etiquette,`
+  <div id="m-photo">${phHtml()}</div>
   <fieldset><legend>Identification</legend>
     <label>Code EAN (pochette)<input id="m-ean" value="${v('ean')}" inputmode="numeric" class="mono-in" spellcheck="false"></label>
     <label>Code étiquette<input id="m-etq" value="${isNew?'Attribué à l\'enregistrement':v('etiquette')}" disabled class="mono-in"></label>
@@ -524,6 +560,14 @@ function montureForm(m,onSaved){
   </fieldset>`,
   `${isNew?'':`<button class="btn danger" data-act="s-del" data-id="${m.id}" style="margin-right:auto">Supprimer</button>`}<button class="btn" data-act="close">Annuler</button><button class="btn primary" id="m-ok">${onSaved?'Enregistrer et ajouter':'Enregistrer'}</button>`,()=>{
     (isNew&&m.ean?$('#m-marque'):$('#m-ean')).focus();
+    const bindPh=()=>{
+      const pick=async inp=>{const f=inp.files[0];if(!f)return;$('#m-phmsg').textContent='Envoi de la photo…';
+        try{const id=await uploadPhoto(f,(m.etiquette||'monture')+'.jpg');if(ph.changed&&ph.file&&ph.file!==m.photo)dropFile(ph.file);ph={file:id,changed:true};$('#m-photo').innerHTML=phHtml();bindPh()}
+        catch(e){$('#m-phmsg').textContent='La photo n\'a pas pu être envoyée. Vérifiez la connexion et réessayez.'}};
+      $('#m-cam').onchange=e=>pick(e.target);$('#m-pic').onchange=e=>pick(e.target);
+      const del=$('#m-phdel');if(del)del.onclick=()=>{if(ph.changed&&ph.file&&ph.file!==m.photo)dropFile(ph.file);ph={file:null,changed:true};$('#m-photo').innerHTML=phHtml();bindPh()};
+      const im=$('#m-photo img');if(im)im.onclick=()=>window.open(im.src,'_blank');
+    };bindPh();
     const syncPv=()=>{
       const c=coefOf($('#m-marque').value.trim()),man=$('#m-man').checked,pa=+$('#m-pa').value||0,pv=$('#m-pv');
       $('#m-manwrap').hidden=!c;
@@ -540,6 +584,7 @@ function montureForm(m,onSaved){
       let res;
       if(isNew){let etq;try{etq=await nextEtiquette(d.marque)}catch(x){toast('Connexion perdue : la monture n\'a pas été créée.');return}res={id:'m'+Date.now().toString(36),etiquette:etq,qte:0,...d};S.montures.push(res)}
       else{res=mon(m.id);Object.assign(res,d);res.demo=false;const q=$('#m-qte');if(q)res.qte=Math.round(+q.value||0)}
+      if(ph.changed){if(res.photo&&res.photo!==ph.file)dropFile(res.photo);if(ph.file)res.photo=ph.file;else res.photo=null}
       res.marque=ensureMarque(res.marque).nom;applyCoef(res);delete res.taille;save();closeModal();
       if(onSaved)onSaved(res);else{render();toast(isNew?`Monture ${res.etiquette} créée`:'Fiche mise à jour')}
     };
@@ -574,7 +619,7 @@ function drawRec(){
   const b=$('#r-lines');if(!b||!rec)return;
   b.innerHTML=rec.lignes.length?rec.lignes.map(l=>{const m=mon(l.montureId);if(!m)return'';return`<tr>
     <td class="mono">${esc(m.etiquette)}${l.nouvelle?'<span class="sub"><span class="tag" style="margin:0">Nouvelle fiche</span></span>':''}</td>
-    <td><b>${esc(desig(m))}</b><span class="sub">${esc([m.coloris,tailleOf(m)].filter(Boolean).join(' · '))}${m.ean?' · EAN '+esc(m.ean):''}</span></td>
+    <td><div class="with-thumb">${thumb(m,'sm')}<div><b>${esc(desig(m))}</b><span class="sub">${esc([m.coloris,tailleOf(m)].filter(Boolean).join(' · '))}${m.ean?' · EAN '+esc(m.ean):''}</span></div></div></td>
     <td><div class="qty"><button data-act="rq-" data-id="${m.id}" aria-label="Diminuer">−</button><input id="rq-${m.id}" type="number" min="1" data-rq="${m.id}" value="${l.qte}" aria-label="Quantité"><button data-act="rq+" data-id="${m.id}" aria-label="Augmenter">+</button></div></td>
     <td class="num"><span class="suffix inline"><input id="rp-${m.id}" type="number" min="0" step="0.01" data-rp="${m.id}" value="${l.pa}" aria-label="Prix d'achat"><span>€</span></span></td>
     <td class="num"><b>${money(l.qte*l.pa)}</b></td>
@@ -768,13 +813,87 @@ function viewCatalogue(){
       <input id="imp-file" type="file" accept=".xml,.xlsx,.xls,.csv,.txt" hidden></label>
     <div id="imp-area"></div>
   </section>
+  <section class="panel" id="ph-panel"><h3>Photos des montures</h3>
+    <p class="muted" style="margin-top:-4px">Le pack photos du fournisseur : un fichier .zip (ou plusieurs images) dont chaque photo porte le code EAN dans son nom, par exemple <span class="mono">03760313673960.jpg</span>. Chaque photo est rattachée à sa monture, y compris celles qui entreront en stock plus tard.</p>
+    ${(()=>{const withEAN=new Set([...S.catalogue.map(c=>normEAN(c.ean)),...S.montures.map(m=>normEAN(m.ean))].filter(Boolean)),idx=photoByEAN();const n=[...withEAN].filter(k=>idx.has(k)).length;
+      return`<p class="hint">${S.photos.length} photo${S.photos.length>1?'s':''} importée${S.photos.length>1?'s':''} · ${n} référence${n>1?'s':''} sur ${withEAN.size} ont une photo.</p>`})()}
+    <label class="drop small" id="ph-drop" for="ph-file"><b>Choisir le pack photos</b><span>ou le glisser ici · .zip, .jpg, .png ou .webp</span>
+      <input id="ph-file" type="file" accept=".zip,image/jpeg,image/png,image/webp" multiple hidden></label>
+    <div id="ph-area"></div>
+  </section>
   <section class="panel"><h3>Catalogues importés</h3>
     ${list.length?`<div class="table-wrap"><table><thead><tr><th>Marque</th><th class="num">Références</th><th class="num">En stock</th><th>Dernier import</th><th></th></tr></thead><tbody>
     ${list.map(([m,x])=>`<tr><td><b>${esc(m)}</b></td><td class="num">${x.n}</td><td class="num">${S.montures.filter(y=>y.marque===m&&y.qte>0).length}</td><td>${dF.format(new Date(x.date))}</td><td class="num"><button class="link danger-link" data-act="cat-del" data-m="${esc(m)}">Retirer le catalogue</button></td></tr>`).join('')}
     </tbody></table></div>`:'<p class="muted">Aucun catalogue importé pour l\'instant.</p>'}
   </section>`;
 }
+/* ---------- Import du pack photos ---------- */
+const JSZIP='https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';let jszipReady=null;
+function loadJSZip(){
+  if(window.JSZip)return Promise.resolve(window.JSZip);
+  if(!jszipReady)jszipReady=new Promise((ok,ko)=>{const s=document.createElement('script');s.src=JSZIP;s.onload=()=>ok(window.JSZip);s.onerror=()=>{jszipReady=null;ko(new Error('jszip'))};document.head.appendChild(s)});
+  return jszipReady;
+}
+let phImp=null;
+const IMG_RE=/\.(jpe?g|png|webp)$/i;
+async function readPhotoFiles(files){
+  const area=$('#ph-area');area.innerHTML='<p class="muted">Lecture des photos…</p>';
+  const items=[];// {name, get:()=>Promise<Blob>}
+  try{
+    for(const f of files){
+      if(/\.zip$/i.test(f.name)||f.type==='application/zip'||f.type==='application/x-zip-compressed'){
+        const JSZip=await loadJSZip();const z=await JSZip.loadAsync(f);
+        z.forEach((path,e)=>{const base=path.split('/').pop();if(e.dir||!IMG_RE.test(base)||/^\._|^__MACOSX/.test(base)||path.includes('__MACOSX/'))return;items.push({name:base,path,get:()=>e.async('blob')})});
+      }else if(IMG_RE.test(f.name))items.push({name:f.name,path:f.name,get:async()=>f});
+    }
+  }catch(e){area.innerHTML='<p class="warn-txt">Le fichier n\'a pas pu être ouvert. Vérifiez que c\'est bien un .zip de photos.</p>';return}
+  if(!items.length){area.innerHTML='<p class="warn-txt">Aucune photo (.jpg, .png ou .webp) trouvée dans ce fichier.</p>';return}
+  /* Références connues : catalogue + stock */
+  const refs=new Map();// EAN -> {modele, coloris, marque}
+  [...S.catalogue,...S.montures].forEach(r=>{const k=normEAN(r.ean);if(k&&!refs.has(k))refs.set(k,r)});
+  const byTxt=new Map();refs.forEach((r,k)=>{const cc=String(r.coloris||'').split(/\s+/)[0];[r.modele+cc,r.marque+r.modele+cc].forEach(t=>{const n=normTxtF(t);if(n.length>=4&&!byTxt.has(n))byTxt.set(n,k)})});
+  const groups=new Map(),unknown=[];
+  items.sort((a,b)=>a.name.localeCompare(b.name,'fr',{numeric:true})).forEach(it=>{
+    const stem=it.name.replace(/\.[^.]+$/,'');let k='';
+    const nums=stem.match(/\d{8,14}/g)||[];for(const n of nums){if(refs.has(normEAN(n))){k=normEAN(n);break}}
+    if(!k){const t=normTxtF(stem.replace(/[_\-\s]+(\d{1,2}|[a-z])$/i,''));if(byTxt.has(t))k=byTxt.get(t)}
+    if(!k){unknown.push(it.name);return}
+    if(!groups.has(k))groups.set(k,it);// première photo du groupe (face) ; les autres angles sont ignorés
+  });
+  const idx=photoByEAN(),fresh=[...groups.keys()].filter(k=>!idx.has(k)).length;
+  phImp={groups,unknown,total:items.length,fresh,replace:false};drawPhotoImport();
+}
+function drawPhotoImport(){
+  const area=$('#ph-area');if(!area||!phImp)return;const {groups,unknown,total,fresh}=phImp,n=groups.size,already=n-fresh;
+  const todo=phImp.replace?n:fresh;
+  area.innerHTML=`<div class="imp-file"><b>${total} photo${total>1?'s':''}</b> lue${total>1?'s':''} · <b>${n}</b> monture${n>1?'s':''} reconnue${n>1?'s':''}${unknown.length?` · <span class="warn-txt">${unknown.length} sans correspondance</span>`:''}</div>
+  ${already?`<label class="check"><input type="checkbox" id="ph-repl" ${phImp.replace?'checked':''}> Remplacer les ${already} photo${already>1?'s':''} déjà présente${already>1?'s':''}</label>`:''}
+  ${unknown.length?`<details class="hint" style="margin:8px 0"><summary>Voir les photos sans correspondance</summary><p class="mono" style="font-size:12px">${unknown.slice(0,60).map(esc).join(', ')}${unknown.length>60?'…':''}</p><p>Le nom du fichier doit contenir le code EAN d'une référence du catalogue ou du stock. Importez d'abord le catalogue de la marque.</p></details>`:''}
+  <div class="imp-foot"><span class="muted" id="ph-prog">${todo?`${todo} photo${todo>1?'s':''} à importer`:'Rien de nouveau à importer'}</span>
+  <div class="row-btns"><button class="btn" data-act="ph-cancel">Annuler</button><button class="btn primary" data-act="ph-ok" ${todo?'':'disabled'}>Importer ${todo} photo${todo>1?'s':''}</button></div></div>`;
+  const r=$('#ph-repl');if(r)r.onchange=()=>{phImp.replace=r.checked;drawPhotoImport()};
+}
+async function runPhotoImport(){
+  if(!phImp||phImp.busy)return;phImp.busy=true;
+  const idx=new Map(S.photos.map(p=>[normEAN(p.ean),p]));
+  const jobs=[...phImp.groups.entries()].filter(([k])=>phImp.replace||!idx.has(k));
+  const btn=document.querySelector('[data-act=ph-ok]');if(btn)btn.disabled=true;
+  let done=0,fail=0,i=0;const prog=$('#ph-prog');
+  const worker=async()=>{while(i<jobs.length){const [k,it]=jobs[i++];
+    try{const blob=await it.get();const id=await uploadPhoto(blob,k+'.jpg');const old=idx.get(k);
+      if(old){if(old.file!==id)dropFile(old.file);old.file=id;old.importe=new Date().toISOString()}else{const p={id:'p'+k,ean:k,file:id,importe:new Date().toISOString()};S.photos.push(p);idx.set(k,p)}
+      done++}catch(e){fail++}
+    if(prog)prog.textContent=`Import en cours : ${done+fail} / ${jobs.length}${fail?` · ${fail} échec${fail>1?'s':''}`:''}`;
+    if((done+fail)%40===0)save()}};
+  await Promise.all([worker(),worker(),worker(),worker()]);
+  save();phImp=null;render();toast(`${done} photo${done>1?'s':''} importée${done>1?'s':''}${fail?` · ${fail} en échec, relancez l'import pour les reprendre`:''}`);
+}
 function bindImport(){
+  const pf=$('#ph-file'),pd=$('#ph-drop');
+  if(pf){pf.addEventListener('change',()=>{if(pf.files.length)readPhotoFiles([...pf.files])});
+    ['dragover','dragenter'].forEach(ev=>pd.addEventListener(ev,e=>{e.preventDefault();pd.classList.add('over')}));
+    ['dragleave','drop'].forEach(ev=>pd.addEventListener(ev,e=>{e.preventDefault();pd.classList.remove('over')}));
+    pd.addEventListener('drop',e=>{if(e.dataTransfer.files.length)readPhotoFiles([...e.dataTransfer.files])});if(phImp)drawPhotoImport()}
   const f=$('#imp-file'),dz=$('#drop');if(!f)return;
   f.addEventListener('change',()=>{if(f.files[0])readCatalogue(f.files[0])});
   ['dragover','dragenter'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.add('over')}));
@@ -977,6 +1096,8 @@ document.addEventListener('click',e=>{
       if(!b.dataset.sure){b.dataset.sure='1';b.textContent='Confirmer la suppression';break}
       S.marques.forEach(x=>{if(x.fournisseurId===id)x.fournisseurId=''});S.fournisseurs=S.fournisseurs.filter(f=>f.id!==id);save();closeModal();render();toast('Fournisseur supprimé');break}
     case'imp-cancel':imp=null;render();break;
+    case'ph-cancel':if(phImp&&!phImp.busy){phImp=null;render()}break;
+    case'ph-ok':runPhotoImport();break;
     case'cat-del':
       if(!b.dataset.sure){b.dataset.sure='1';b.textContent='Confirmer';break}
       S.catalogue=S.catalogue.filter(c=>c.marque!==b.dataset.m);save();render();toast('Catalogue '+b.dataset.m+' retiré. Les montures déjà en stock sont conservées.');break;
@@ -2298,6 +2419,7 @@ function render(){
   else $('#app').innerHTML=viewHome();
 }
 window.addEventListener('hashchange',()=>{closeModal();render();window.scrollTo(0,0)});
+document.addEventListener('click',e=>{const t=e.target.closest&&e.target.closest('img.thumb[data-zoom]');if(!t||t.closest('#modal'))return;e.stopPropagation();e.preventDefault();photoView(mon(t.dataset.zoom))},true);
 document.addEventListener('input',e=>{if(e.target.id==='q')fillRows()});
 document.addEventListener('change',e=>{
   const t=e.target;

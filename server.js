@@ -23,7 +23,7 @@ const USERS = [
 ];
 
 /* Collections synchronisées (tableaux du state) ; le reste du state est en « meta » */
-const KINDS = ['clients', 'montures', 'ventes', 'devis', 'receptions', 'reglements', 'clotures', 'catalogue', 'marques', 'fournisseurs', 'facturesF'];
+const KINDS = ['clients', 'montures', 'ventes', 'devis', 'receptions', 'reglements', 'clotures', 'catalogue', 'marques', 'fournisseurs', 'facturesF', 'photos'];
 const SEQ_NAMES = { V: 'seqV', FA: 'seqFA', M: 'seqM', D: 'seqD', R: 'seqR', C: 'seq', F: 'seqF' };
 
 const app = express();
@@ -249,7 +249,7 @@ app.get('/api/files/:id', needAuth, wrap(async (req, res) => {
   if (!rows[0]) return res.status(404).send('Document introuvable');
   res.setHeader('Content-Type', rows[0].type);
   res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(rows[0].nom)}`);
-  res.setHeader('Cache-Control', 'private, max-age=86400');
+  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable'); // un document n'est jamais modifié : nouvel id à chaque envoi
   res.send(rows[0].data);
 }));
 app.delete('/api/files/:id', needAuth, wrap(async (req, res) => {
