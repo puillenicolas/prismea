@@ -16,6 +16,11 @@ const PAYS=[
  ['CA','Canada','1'],['US','États-Unis','1'],['BR','Brésil','55'],['CN','Chine','86'],['HK','Hong Kong','852'],['IN','Inde','91'],['JP','Japon','81'],['KR','Corée du Sud','82'],['LB','Liban','961'],['AE','Émirats arabes unis','971'],['TR','Turquie','90']
 ];
 const CEMAC=['GA','CM','CG','GQ','TD','CF'];
+/* Zone franc CFA (CEMAC + UEMOA) : parité fixe 1 € = 655,957 FCFA */
+const ZONE_CFA=[...CEMAC,'BJ','BF','CI','GW','ML','NE','SN','TG'],XAF=655.957;
+const showCFA=c=>!!(c&&ZONE_CFA.includes(c.pays))&&(window.__PRISMEA__.state.societe||{}).fcfa!==false;
+const cfa=n=>new Intl.NumberFormat('fr-FR',{maximumFractionDigits:0}).format(Math.round((n||0)*XAF))+'\u00A0FCFA';
+const cfaNote=n=>`Contre-valeur : ${cfa(n)} (parité fixe 1 € = 655,957 FCFA)`;
 const UE=['AT','BE','BG','HR','CY','CZ','DK','EE','FI','FR','DE','GR','HU','IE','IT','LV','LT','LU','MT','NL','PL','PT','RO','SK','SI','ES','SE'];
 const prefixTVA=c=>c==='GR'?'EL':c;
 const paysByCode=c=>PAYS.find(p=>p[0]===c);
@@ -283,6 +288,7 @@ function viewClient(id){
     <button class="act-card primary" data-act="sale" data-id="${id}"><span class="act-ico">${ICO_SALE}</span><span><b>Nouvelle vente</b><span>Vendre des montures à ce client</span></span></button>
     <button class="act-card" data-act="quote" data-id="${id}"><span class="act-ico">${ICO_QUOTE}</span><span><b>Nouveau devis</b><span>Préparer une proposition chiffrée</span></span></button>
   </div>
+  ${encoursOf(id)>0.005?`<div class="relance-bar"><span>Reste à encaisser <b>${money(encoursOf(id))}</b>${(()=>{const r=(c.relances||[]).slice(-1)[0];return r?` · dernière relance le ${dF.format(new Date(r.date))}`:''})()}</span><span class="row-btns"><button class="btn small" data-act="rel-pdf" data-id="${id}">Relevé de compte (PDF)</button><button class="btn small primary" data-act="rel-send" data-id="${id}">Relancer par e-mail</button></span></div>`:''}
   <p class="note" id="note" role="status"></p>
   ${ventesParMois(id)}
   ${S.devis.some(v=>v.clientId===id)?`<section class="panel"><h3>Devis</h3>${docList(S.devis.filter(v=>v.clientId===id),'')}</section>`:''}`;
@@ -348,7 +354,7 @@ function drawDoc(){
   ${(()=>{const c=cli(doc.clientId);if(doc.kind!=='vente'||!c||!(c.plafond>0)||doc.paiement!==PAY_LATER)return'';const e=encoursOf(c.id),apres=e+t.ttc;
     return apres>c.plafond?`<div class="regime warn">Plafond de crédit dépassé<span>Encours actuel ${money(e)} + cette vente ${money(t.ttc)} = ${money(apres)}, pour un plafond de ${money(c.plafond)}.</span></div>`:''})()}
   <dl class="totals"><dt>${nb} monture${nb>1?'s':''}</dt><dd>${money(t.brut)}</dd>${remTotals({...t,remise:doc.remise,remiseT:doc.remiseT},false)}
-   ${taxLines(t,doc.regime,doc.tvaIntra)}</dl>
+   ${taxLines(t,doc.regime,doc.tvaIntra)}${showCFA(cli(doc.clientId))&&t.ttc?`<dd class="legal">Soit ${cfa(t.ttc)}</dd>`:''}</dl>
   <button class="btn primary block" data-act="doc-ok" ${doc.lignes.length?'':'disabled'}>${doc.kind==='vente'?'Valider la vente':'Enregistrer le devis'}</button>
   <button class="btn block ghost" data-act="doc-cancel">Annuler</button>`;
 }
@@ -500,6 +506,7 @@ function proformaPDF(d){
   if(y+tot.length*5.5>270){pdf.addPage();y=20}
   tot.forEach(([k,val],i)=>{const last=i===tot.length-1;pdf.setFont('helvetica',last?'bold':'normal');pdf.setFontSize(last?11:9.2);if(last){pdf.setDrawColor(10,102,112);pdf.line(120,y-4,R,y-4)}pdf.text(txt(k),122,y);pdf.text(val,R,y,{align:'right'});y+=last?7:5});
   y+=2;pdf.setFont('helvetica','normal');pdf.setFontSize(8.8);
+  if(showCFA(c)){pdf.setFontSize(8.2);pdf.setTextColor(90);pdf.text(txt(cfaNote(d.ttc)),R,y,{align:'right'});pdf.setTextColor(0);y+=5;pdf.setFontSize(8.8)}
   const words=pdf.splitTextToSize(txt('Arrêtée la présente facture proforma à la somme de : '+eurosEnLettres(d.ttc)+'.'),R-L);pdf.text(words,L,y);y+=words.length*4.2+3;
   const legal=reg==='fr'?'':reg==='ue'?`Livraison intracommunautaire exonérée de TVA, article 262 ter I du CGI.`:'Exportation exonérée de TVA, article 262 I du CGI.';
   const lines=[legal,o.paiement?'Conditions de paiement : '+o.paiement+'.':'',s.iban?`Coordonnées bancaires : ${s.banque?s.banque+' · ':''}IBAN ${s.iban}${s.bic?' · BIC '+s.bic:''}. Merci d'indiquer la référence ${pfNum(d)} sur votre virement.`:'',
@@ -613,6 +620,7 @@ function viewStock(){
     :`<div class="table-wrap"><div class="empty-state"><h3>Aucune monture en stock</h3><p>Importez le catalogue d'une marque, puis scannez les pochettes à la réception : les fiches se remplissent toutes seules.</p><div class="row-btns"><a class="btn" href="#catalogue">${ICO_IMPORT} Importer un catalogue</a><a class="btn primary" href="#entree">Entrée de stock</a></div></div></div>`;
   else if(stockTab==='marques')body=marquesTab();
   else if(stockTab==='fournisseurs')body=fournisseursTab();
+  else if(stockTab==='commandes')body=commandesTab();
   else if(stockTab==='receptions'){
     const rs=[...S.receptions].sort((a,b)=>b.date.localeCompare(a.date));
     body=`<div class="table-wrap"><table><thead><tr><th>N°</th><th>Date</th><th>Fournisseur</th><th>BL / facture</th><th class="num">Montures</th><th class="num">Montant HT</th></tr></thead><tbody>
@@ -622,7 +630,7 @@ function viewStock(){
   return`<a class="back" href="#">← Accueil</a>
   <div class="head"><div><h1>Stock</h1><p>${nb} monture${nb>1?'s':''} en stock · ${money(val)} au prix d'achat${alertes?` · <span class="warn-txt">${alertes} en alerte</span>`:''}</p></div>
     <div class="row-btns"><a class="btn" href="#catalogue">${ICO_IMPORT} Importer un catalogue</a><button class="btn" data-act="etq-new">Imprimer des étiquettes</button><button class="btn" data-act="s-new">Nouvelle monture</button><a class="btn primary" href="#entree">Entrée de stock</a></div></div>
-  <div class="tabs" role="tablist">${tab('montures','Montures',S.montures.length)}${tab('receptions','Entrées de stock',S.receptions.length)}${tab('marques','Marques et coefficients',S.marques.length)}${tab('fournisseurs','Fournisseurs',S.fournisseurs.length)}</div>${body}`;
+  <div class="tabs" role="tablist">${tab('montures','Montures',S.montures.length)}${tab('receptions','Entrées de stock',S.receptions.length)}${tab('marques','Marques et coefficients',S.marques.length)}${tab('fournisseurs','Fournisseurs',S.fournisseurs.length)}${tab('commandes','Commandes fournisseur',(S.commandesF||[]).filter(x=>cfOpen(x)).length||null)}</div>${body}`;
 }
 function fillStock(){
   const b=$('#srows');if(!b)return;
@@ -709,6 +717,135 @@ async function montureFromCatalogue(c){
 }
 
 /* Entrée de stock */
+/* ---------- Commandes fournisseur et réassort ---------- */
+S.commandesF=S.commandesF||[];S.seqCF=S.seqCF||0;
+const cfOf=id=>S.commandesF.find(x=>x.id===id);
+const cfReste=cf=>cf.solde?0:cf.lignes.reduce((t,l)=>t+Math.max(0,l.qte-(l.recu||0)),0);
+const cfOpen=cf=>!cf.solde&&cfReste(cf)>0;
+const cfStatut=cf=>cf.solde?(cf.lignes.some(l=>(l.recu||0)<l.qte)?['Soldée (reliquat annulé)','neutral']:['Reçue','ok']):cf.lignes.every(l=>(l.recu||0)>=l.qte)?['Reçue','ok']:cf.lignes.some(l=>l.recu)?['Partiellement reçue','warn']:['Envoyée','neutral'];
+const enCommande=(mid,ean)=>S.commandesF.filter(cfOpen).reduce((t,cf)=>t+cf.lignes.filter(l=>(mid&&l.montureId===mid)||(ean&&normEAN(l.ean)===normEAN(ean))).reduce((u,l)=>u+Math.max(0,l.qte-(l.recu||0)),0),0);
+function cfPointer(cf,recus){
+  recus.forEach(x=>{let q=x.qte;cf.lignes.filter(l=>(l.montureId&&l.montureId===x.montureId)||(x.ean&&l.ean&&normEAN(l.ean)===normEAN(x.ean))).forEach(l=>{if(q<=0)return;if(!l.montureId)l.montureId=x.montureId;const k=Math.min(q,Math.max(0,l.qte-(l.recu||0)));l.recu=(l.recu||0)+k;q-=k});
+    if(q>0){const l=cf.lignes.find(l=>l.montureId===x.montureId);if(l)l.recu=(l.recu||0)+q}});
+}
+function cfRecPanel(){
+  const cf=cfOf(rec.commandeId);if(!cf)return'';
+  const rows=cf.lignes.map(l=>{const sc=rec.lignes.filter(x=>x.montureId===l.montureId||(l.ean&&normEAN((mon(x.montureId)||{}).ean)===normEAN(l.ean))).reduce((t,x)=>t+x.qte,0);const att=Math.max(0,l.qte-(l.recu||0));return{l,sc,att}}).filter(x=>x.att>0||x.sc>0);
+  const manque=rows.reduce((t,x)=>t+Math.max(0,x.att-x.sc),0);
+  return`<div class="cf-panel"><b>Commande ${cf.num}</b><span class="sub">${manque?`${manque} monture${manque>1?'s':''} encore attendue${manque>1?'s':''} (reliquat)`:'Tout ce qui était attendu est scanné'}</span>
+  <ul>${rows.slice(0,12).map(x=>`<li class="${x.sc>=x.att?'ok':''}"><span>${esc(x.l.designation)}${x.l.coloris?' · '+esc(x.l.coloris):''}</span><b>${x.sc}/${x.att}</b></li>`).join('')}${rows.length>12?`<li><span class="muted">… et ${rows.length-12} autres</span></li>`:''}</ul></div>`;
+}
+function commandesTab(){
+  const list=[...S.commandesF].sort((a,b)=>b.date.localeCompare(a.date));
+  return`<div class="row-between"><p class="muted">Bons de commande envoyés aux fournisseurs. À la réception, choisissez la commande dans l'entrée de stock pour pointer ce qui est arrivé et suivre les reliquats.</p><span class="row-btns"><a class="btn primary" href="#reassort">Réassort / nouvelle commande</a></span></div>
+  <div class="table-wrap"><table><thead><tr><th>N°</th><th>Date</th><th>Fournisseur</th><th class="num">Montures</th><th class="num">Reçues</th><th class="num">Montant HT</th><th>Statut</th></tr></thead><tbody>
+  ${list.length?list.map(cf=>{const q=cf.lignes.reduce((t,l)=>t+l.qte,0),rc=cf.lignes.reduce((t,l)=>t+Math.min(l.qte,l.recu||0),0),[st,cl]=cfStatut(cf);return`<tr class="row-link" data-cfid="${cf.id}" tabindex="0"><td class="mono">${cf.num}</td><td>${dF.format(new Date(cf.date))}</td><td>${esc((fourOf(cf.fournisseurId)||{}).nom||'—')}</td><td class="num">${q}</td><td class="num">${rc}</td><td class="num">${money(cf.total)}</td><td><span class="pill ${cl}">${st}</span></td></tr>`}).join('')
+  :'<tr><td colspan="7"><div class="empty-state" style="padding:32px 12px"><p>Aucune commande fournisseur. Le réassort propose quoi recommander d\'après les ventes et les seuils d\'alerte.</p><a class="btn primary" href="#reassort">Préparer un réassort</a></div></td></tr>'}
+  </tbody></table></div>`;
+}
+/* Réassort : suggestions d'après les ventes des 90 derniers jours (couvrir 2 mois) et le seuil d'alerte */
+let ra=null;
+function ventes90(mid){const lim=addDays(new Date(),-90);return S.ventes.filter(v=>new Date(v.date)>=lim).reduce((t,v)=>t+v.lignes.filter(l=>l.montureId===mid).reduce((u,l)=>u+l.qte,0),0)}
+function suggestion(m){const v90=ventes90(m.id),cible=Math.max((m.seuil||0)+1,Math.ceil(v90/3*2));return{v90,cmd:enCommande(m.id,m.ean),sug:Math.max(0,cible-Math.max(0,m.qte)-enCommande(m.id,m.ean))}}
+function viewReassort(){
+  if(!ra)ra={fournisseurId:(S.fournisseurs[0]||{}).id||'',qte:{},extra:[],tout:false};
+  const f=fourOf(ra.fournisseurId),bs=new Set(marquesOfFour(ra.fournisseurId).map(b=>b.nom));
+  const ms=S.montures.filter(m=>bs.has(m.marque)).map(m=>({m,...suggestion(m)}));
+  const rows=ms.filter(x=>ra.tout||x.sug>0||ra.qte[x.m.id]>0).sort((a,b)=>(b.sug-a.sug)||desig(a.m).localeCompare(desig(b.m),'fr'));
+  rows.forEach(x=>{if(ra.qte[x.m.id]==null)ra.qte[x.m.id]=x.sug});
+  const tot=rows.reduce((t,x)=>t+(ra.qte[x.m.id]||0)*(x.m.pa||0),0)+ra.extra.reduce((t,e)=>t+e.qte*(e.pa||0),0),nb=rows.reduce((t,x)=>t+(ra.qte[x.m.id]||0),0)+ra.extra.reduce((t,e)=>t+e.qte,0);
+  return`<a class="back" href="#stock">← Stock</a>
+  <div class="head"><div><h1>Réassort</h1><p>Prismea propose de quoi couvrir environ 2 mois de ventes (d'après les 90 derniers jours), sans descendre sous le seuil d'alerte, en tenant compte de ce qui est déjà commandé.</p></div></div>
+  <section class="panel"><div class="form-row">
+    <label>Fournisseur<select id="ra-four">${S.fournisseurs.map(x=>`<option value="${x.id}" ${x.id===ra.fournisseurId?'selected':''}>${esc(x.nom)}</option>`).join('')}</select><span class="hint">${bs.size?'Marques : '+[...bs].map(esc).join(', '):'Aucune marque rattachée à ce fournisseur'}</span></label>
+    <label class="check" style="align-self:end"><input type="checkbox" id="ra-tout" ${ra.tout?'checked':''}> Afficher toutes les références</label>
+    <label>Ajouter une référence<input id="ra-scan" placeholder="Scan EAN, code étiquette ou EAN du catalogue" autocomplete="off"></label></div></section>
+  <div class="table-wrap"><table><thead><tr><th>Monture</th><th class="num">Stock</th><th class="num">Seuil</th><th class="num">Vendues 90 j</th><th class="num">Déjà commandé</th><th class="num">Suggéré</th><th style="width:150px">À commander</th><th class="num">Prix d'achat</th></tr></thead><tbody>
+  ${rows.map(x=>`<tr><td><div class="with-thumb">${thumb(x.m,'sm')}<div><b>${esc(desig(x.m))}</b><span class="sub"><span class="mono">${esc(x.m.etiquette)}</span> · ${esc([x.m.coloris,tailleOf(x.m)].filter(Boolean).join(' · '))}</span></div></div></td>
+    <td class="num">${stockState(x.m)}</td><td class="num">${x.m.seuil||0}</td><td class="num">${x.v90}</td><td class="num">${x.cmd||'—'}</td><td class="num">${x.sug||'—'}</td>
+    <td><div class="qty"><button data-act="ra-q" data-id="${x.m.id}" data-d="-1" aria-label="Diminuer">−</button><input type="number" min="0" data-raq="${x.m.id}" value="${ra.qte[x.m.id]||0}" aria-label="Quantité à commander"><button data-act="ra-q" data-id="${x.m.id}" data-d="1" aria-label="Augmenter">+</button></div></td>
+    <td class="num">${money(x.m.pa||0)}</td></tr>`).join('')}
+  ${ra.extra.map((e,i)=>`<tr><td><b>${esc(e.designation)}</b><span class="sub">${esc([e.coloris,e.taille].filter(Boolean).join(' · '))} · EAN ${esc(e.ean)} · <span class="tag" style="margin:0">Nouvelle référence</span></span></td><td class="num">—</td><td></td><td></td><td></td><td></td>
+    <td><div class="qty"><button data-act="ra-xq" data-i="${i}" data-d="-1">−</button><input type="number" min="0" data-raxq="${i}" value="${e.qte}"><button data-act="ra-xq" data-i="${i}" data-d="1">+</button></div></td><td class="num">${money(e.pa||0)}</td></tr>`).join('')}
+  ${rows.length||ra.extra.length?'':`<tr><td colspan="8"><div class="empty-state" style="padding:32px 12px"><p>${bs.size?'Rien à recommander pour l\'instant : le stock couvre les ventes. Cochez « Afficher toutes les références » pour commander quand même.':'Rattachez des marques à ce fournisseur (Stock › Marques).'}</p></div></td></tr>`}
+  </tbody></table></div>
+  <div class="imp-foot"><span class="muted">${nb} monture${nb>1?'s':''} · ${money(tot)} HT${f&&f.conditions?' · '+esc(f.conditions):''}</span><div class="row-btns"><button class="btn primary" data-act="ra-ok" ${nb?'':'disabled'}>Créer le bon de commande</button></div></div>`;
+}
+function bindReassort(){
+  const f=$('#ra-four');if(!f)return;f.onchange=()=>{ra={fournisseurId:f.value,qte:{},extra:[],tout:false};render()};
+  $('#ra-tout').onchange=e=>{ra.tout=e.target.checked;render()};
+  document.querySelectorAll('[data-raq]').forEach(i=>i.onchange=()=>{ra.qte[i.dataset.raq]=Math.max(0,Math.round(+i.value||0));render()});
+  document.querySelectorAll('[data-raxq]').forEach(i=>i.onchange=()=>{ra.extra[+i.dataset.raxq].qte=Math.max(0,Math.round(+i.value||0));render()});
+  const sc=$('#ra-scan');sc.onkeydown=e=>{if(e.key!=='Enter')return;e.preventDefault();const code=sc.value.trim();if(!code)return;
+    const m=findMonture(code);if(m){ra.tout=ra.tout||!(ra.qte[m.id]>0);if(!marquesOfFour(ra.fournisseurId).some(b=>b.nom===m.marque)){toast(`${m.marque} n'est pas rattachée à ce fournisseur.`);return}ra.qte[m.id]=(ra.qte[m.id]||0)+1;render();$('#ra-scan')?.focus();return}
+    const c=catByEAN(code);if(c){const ex=ra.extra.find(x=>normEAN(x.ean)===normEAN(c.ean));if(ex)ex.qte++;else ra.extra.push({ean:c.ean,designation:c.marque+' '+c.modele,modele:c.modele,coloris:c.coloris,taille:[c.calibre,c.pont].filter(Boolean).join('□')+(c.branche?' '+c.branche:''),pa:c.pa||0,qte:1});render();$('#ra-scan')?.focus();return}
+    toast('Référence introuvable dans le stock ou le catalogue.');sc.select()};
+}
+async function raCreate(){
+  if(!ra)return;const f=fourOf(ra.fournisseurId);if(!f)return;
+  const bs=new Set(marquesOfFour(ra.fournisseurId).map(b=>b.nom));
+  const lignes=[...S.montures.filter(m=>bs.has(m.marque)&&ra.qte[m.id]>0).map(m=>({montureId:m.id,ean:m.ean||'',etiquette:m.etiquette,designation:desig(m),modele:m.modele,coloris:m.coloris||'',taille:tailleOf(m),qte:ra.qte[m.id],pa:m.pa||0,recu:0})),
+    ...ra.extra.filter(e=>e.qte>0).map(e=>({montureId:'',ean:e.ean,etiquette:'',designation:e.designation,modele:e.modele,coloris:e.coloris||'',taille:e.taille||'',qte:e.qte,pa:e.pa||0,recu:0}))];
+  if(!lignes.length)return;
+  let n;try{n=await alloc('CF',S.seqCF||0)}catch(x){toast('Connexion perdue : la commande n\'a pas été créée.');return}
+  S.seqCF=Math.max(S.seqCF||0,n);const d=new Date();
+  const cf={id:'cf'+Date.now().toString(36),num:'CF'+d.getFullYear()+'-'+pad4(n),date:d.toISOString(),fournisseurId:f.id,lignes,total:r2(lignes.reduce((t,l)=>t+l.qte*l.pa,0)),note:'',par:(window.__PRISMEA__.user||{}).nom||''};
+  S.commandesF.push(cf);save();ra=null;stockTab='commandes';location.hash='stock';setTimeout(()=>cfDetail(cf.id),60);toast(`Commande ${cf.num} créée`);
+}
+function cfDetail(id){
+  const cf=cfOf(id);if(!cf)return;const f=fourOf(cf.fournisseurId)||{},[st,cl]=cfStatut(cf),reste=cfReste(cf),recu=cf.lignes.some(l=>l.recu);
+  openModal('Commande '+cf.num,`${f.nom||''} · ${dF.format(new Date(cf.date))}`,`<div class="ticket-meta"><span>${cf.lignes.reduce((t,l)=>t+l.qte,0)} montures commandées · ${money(cf.total)} HT</span><span class="pill ${cl}">${st}</span></div>
+  <div class="table-wrap"><table><thead><tr><th>Monture</th><th>EAN</th><th class="num">Commandé</th><th class="num">Reçu</th><th class="num">Reste</th><th class="num">PU HT</th></tr></thead><tbody>
+  ${cf.lignes.map(l=>`<tr><td><b>${esc(l.designation)}</b><span class="sub">${esc([l.etiquette,l.coloris,l.taille].filter(Boolean).join(' · '))}</span></td><td class="mono sub-cell">${esc(l.ean||'—')}</td><td class="num">${l.qte}</td><td class="num">${l.recu||0}</td><td class="num">${cf.solde?'—':Math.max(0,l.qte-(l.recu||0))||'<span style="color:var(--ok)">✓</span>'}</td><td class="num">${money(l.pa)}</td></tr>`).join('')}
+  </tbody></table></div>
+  ${(cf.receptions||[]).length?`<p class="hint">Entrées de stock liées : ${cf.receptions.map(rid=>esc((S.receptions.find(r=>r.id===rid)||{}).num||'')).join(', ')}</p>`:''}
+  ${cf.envoi?`<p class="hint">Envoyée le ${dF.format(new Date(cf.envoi.le))} à ${esc(cf.envoi.a)}.</p>`:''}`,
+  `${recu?'':`<button class="btn danger" data-act="cf-del" data-id="${cf.id}" style="margin-right:auto">Supprimer</button>`}${reste&&recu?`<button class="btn" data-act="cf-solde" data-id="${cf.id}" style="margin-right:auto">Solder (annuler le reliquat)</button>`:''}
+   <button class="btn" data-act="cf-pdf" data-id="${cf.id}">PDF</button><button class="btn" data-act="cf-mail" data-id="${cf.id}">Envoyer au fournisseur</button>${reste?`<button class="btn primary" data-act="cf-recep" data-id="${cf.id}">Réceptionner</button>`:''}`);
+  $('.modal-card').classList.add('wide');
+}
+const cfFile=cf=>`Bon de commande ${cf.num} - ${((fourOf(cf.fournisseurId)||{}).nom||'').replace(/[\\/:*?"<>|]/g,'')}.pdf`;
+function commandePDF(cf){
+  const {jsPDF}=window.jspdf;const pdf=new jsPDF({unit:'mm',format:'a4'});
+  const txt=x=>String(x??'').replace(/[  ]/g,' ').replace(/□/g,'/').replace(/[−–]/g,'-');const eur=n=>txt(money(n));
+  const s=S.societe,f=fourOf(cf.fournisseurId)||{},p=paysByCode(f.pays);const W=210,L=16,R=W-16;let y=18;
+  pdf.setFont('helvetica','bold');pdf.setFontSize(15);pdf.text(txt(s.nom||'Votre société'),L,y);
+  pdf.setFont('helvetica','normal');pdf.setFontSize(8.5);pdf.setTextColor(80);
+  const sl=[s.adresse,[s.cp,s.ville].filter(Boolean).join(' '),[s.tel,s.email].filter(Boolean).join(' · '),s.siren?'SIREN '+s.siren:'',s.tvaIntra?'N° TVA '+s.tvaIntra:''].filter(Boolean);sl.forEach((t,i)=>pdf.text(txt(t),L,y+5+i*4));
+  pdf.setTextColor(0);pdf.setFont('helvetica','bold');pdf.setFontSize(17);pdf.text('BON DE COMMANDE',R,y,{align:'right'});
+  pdf.setFontSize(10);pdf.text(txt('N° '+cf.num),R,y+7,{align:'right'});pdf.setFont('helvetica','normal');pdf.setFontSize(9);pdf.text(txt('Date : '+dF.format(new Date(cf.date))),R,y+12,{align:'right'});
+  y=Math.max(y+5+sl.length*4,y+18)+8;
+  pdf.setFillColor(246,248,250);pdf.roundedRect(110,y,R-110,30,2,2,'F');pdf.setFontSize(8);pdf.setTextColor(100);pdf.text('FOURNISSEUR',114,y+6);pdf.setTextColor(0);
+  pdf.setFont('helvetica','bold');pdf.setFontSize(10.5);pdf.text(txt(f.nom||''),114,y+12);pdf.setFont('helvetica','normal');pdf.setFontSize(8.8);
+  [...(f.adresse||'').split('\n'),p?p[1]:'',f.email||'',f.tvaIntra?'N° TVA '+f.tvaIntra:''].filter(Boolean).slice(0,4).forEach((t,i)=>pdf.text(txt(t),114,y+17+i*4.2));
+  pdf.setFontSize(8.6);pdf.setTextColor(100);pdf.text('LIVRAISON',L,y+6);pdf.setTextColor(0);[s.nom,s.adresse,[s.cp,s.ville].filter(Boolean).join(' ')].filter(Boolean).forEach((t,i)=>pdf.text(txt(t),L,y+11+i*4.2));
+  y+=38;
+  const body=cf.lignes.map(l=>[txt(l.modele||l.designation),txt(l.coloris),txt(l.taille),txt(l.ean),String(l.qte),eur(l.pa),eur(l.qte*l.pa)]);
+  pdf.autoTable({startY:y,head:[['Modèle','Coloris','Taille','EAN','Qté','PU HT','Montant HT']],body,margin:{left:L,right:16},styles:{font:'helvetica',fontSize:8.6,cellPadding:2},headStyles:{fillColor:[10,102,112],textColor:255},
+    columnStyles:{3:{cellWidth:30},4:{halign:'right',cellWidth:12},5:{halign:'right',cellWidth:22},6:{halign:'right',cellWidth:26}}});
+  y=pdf.lastAutoTable.finalY+7;
+  pdf.setFont('helvetica','normal');pdf.setFontSize(9.2);pdf.text('Nombre de montures',122,y);pdf.text(String(cf.lignes.reduce((t,l)=>t+l.qte,0)),R,y,{align:'right'});y+=6;
+  pdf.setFont('helvetica','bold');pdf.setFontSize(11);pdf.text('Total HT',122,y);pdf.text(eur(cf.total),R,y,{align:'right'});y+=9;
+  pdf.setFont('helvetica','normal');pdf.setFontSize(8.6);
+  ['Merci de rappeler le numéro de commande '+cf.num+' sur le bon de livraison et la facture, et d\'indiquer les codes EAN sur les pochettes.',f.conditions?'Conditions : '+f.conditions:''].filter(Boolean).forEach(t=>{const w=pdf.splitTextToSize(txt(t),R-L);pdf.text(w,L,y);y+=w.length*4+2});
+  return pdf.output('arraybuffer');
+}
+function cfMail(id){
+  const cf=cfOf(id);if(!cf)return;const f=fourOf(cf.fournisseurId)||{},mail=window.__PRISMEA__.mail||{},sig=(window.__PRISMEA__.user||{}).nom||'';
+  const msg=`Bonjour,\n\nVeuillez trouver ci-joint notre bon de commande ${cf.num} (${cf.lignes.reduce((t,l)=>t+l.qte,0)} montures, ${money(cf.total).replace(/ /g,' ')} HT).\n\nMerci de nous confirmer la disponibilité et le délai de livraison.\n\nCordialement,\n${sig}\n${S.societe.nom||''}`;
+  openModal('Envoyer la commande '+cf.num,f.nom||'',`<fieldset><label class="full">Destinataire<input id="cm-to" type="email" value="${esc(f.email||'')}"></label>
+    <label class="full">Objet<input id="cm-subj" value="${esc('Bon de commande '+cf.num+' – '+(S.societe.nom||''))}"></label><label class="full">Message<textarea id="cm-msg" rows="9">${esc(msg)}</textarea></label></fieldset>
+    ${mail.configured?'':'<div class="lu-box warn">L\'envoi direct n\'est pas encore activé : le bouton télécharge le PDF et ouvre votre messagerie.</div>'}`,
+    `<button class="btn" data-act="cf-open" data-id="${cf.id}">Retour</button><button class="btn primary" id="cm-ok">${mail.configured?'Envoyer':'Télécharger et ouvrir ma messagerie'}</button>`,()=>{
+    $('#cm-ok').onclick=async()=>{const to=$('#cm-to').value.trim(),subj=$('#cm-subj').value.trim(),text=$('#cm-msg').value;
+      if(!/^\S+@\S+\.\S+$/.test(to)){toast('Saisissez une adresse e-mail valide.');return}
+      const b=$('#cm-ok');b.disabled=true;const ab=commandePDF(cf);
+      try{if(mail.configured){const r=await fetch('/api/mail',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({to,subject:subj,text,replyTo:S.societe.email||'',attachments:[{name:cfFile(cf),content:abToB64(ab)}]})});if(!r.ok)throw 0}
+        else{await offerFile(cfFile(cf),new Blob([ab],{type:'application/pdf'}));const a=document.createElement('a');a.href=`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(text)}`;a.click()}
+        if(!f.email&&f.id){const ff=fourOf(f.id);if(ff)ff.email=to}cf.envoi={le:new Date().toISOString(),a:to};save();cfDetail(cf.id);toast(mail.configured?'Commande envoyée':'PDF téléchargé : joignez-le au message')}
+      catch(e){b.disabled=false;toast('L\'envoi a échoué. Réessayez.')}};
+  });
+}
 function viewEntree(){
   if(!rec)rec={fournisseurId:'',doc:'',date:new Date().toISOString().slice(0,10),lignes:[]};
   const bs=rec.fournisseurId?marquesOfFour(rec.fournisseurId):[];
@@ -718,7 +855,8 @@ function viewEntree(){
     <section class="panel"><div class="form-row">
       <label>Fournisseur <span class="req">*</span><select id="r-four">${fourOptions(rec.fournisseurId,true)}</select>${rec.fournisseurId?`<span class="hint">${bs.length?'Marques : '+bs.map(b=>esc(b.nom)).join(', '):'Aucune marque rattachée'}</span>`:''}</label>
       <label>N° BL ou facture<input id="r-doc" value="${esc(rec.doc)}"></label>
-      <label>Date de réception<input id="r-date" type="date" value="${rec.date}"></label></div></section>
+      <label>Date de réception<input id="r-date" type="date" value="${rec.date}"></label>
+      ${(()=>{const open=(S.commandesF||[]).filter(x=>cfOpen(x)&&(!rec.fournisseurId||x.fournisseurId===rec.fournisseurId));return open.length||rec.commandeId?`<label>Commande fournisseur<select id="r-cmd"><option value="">Aucune</option>${open.map(x=>`<option value="${x.id}" ${x.id===rec.commandeId?'selected':''}>${x.num} · ${esc((fourOf(x.fournisseurId)||{}).nom||'')} · reste ${cfReste(x)}</option>`).join('')}</select><span class="hint">Les quantités reçues seront pointées sur la commande</span></label>`:''})()}</div></section>
     <section class="panel scan"><label for="rscan">Scannez le code-barres de la pochette ou saisissez le code étiquette</label>
       <div class="scan-row"><span class="scan-ico">${ICO_SCAN}</span><input id="rscan" autocomplete="off" spellcheck="false" placeholder="Code-barres EAN ou code étiquette, puis Entrée"><button class="btn primary" data-act="r-add">Ajouter</button></div>
       <p class="scan-msg" id="rscan-msg" role="status"></p>
@@ -740,6 +878,7 @@ function drawRec(){
   const nb=rec.lignes.reduce((t,l)=>t+l.qte,0),tot=rec.lignes.reduce((t,l)=>t+l.qte*l.pa,0),nv=rec.lignes.filter(l=>l.nouvelle).length;
   $('#r-side').innerHTML=`<h3>Récapitulatif</h3>
   <dl class="totals"><dt>Références</dt><dd>${rec.lignes.length}</dd><dt>Montures reçues</dt><dd>${nb}</dd>${nv?`<dt>Nouvelles fiches</dt><dd>${nv}</dd>`:''}<dt class="big">Total HT</dt><dd class="big">${money(tot)}</dd></dl>
+  ${rec.commandeId?cfRecPanel():''}
   <p class="hint" style="margin:0">À la validation, le stock augmente, le prix d'achat est recalculé au prix moyen pondéré et le prix de vente suit le coefficient de la marque.</p>
   <button class="btn primary block" data-act="r-ok" ${rec.lignes.length?'':'disabled'}>Valider l'entrée de stock</button>
   <button class="btn block ghost" data-act="r-cancel">Annuler</button>`;
@@ -779,6 +918,7 @@ async function validateRec(){
   const r={id:'r'+Date.now().toString(36),num:'R'+d.getFullYear()+'-'+pad4(numR),date:d.toISOString(),fournisseurId:four.id,fournisseur:four.nom,doc:rec.doc,
     lignes:lignes.map(l=>{const m=mon(l.montureId);return{montureId:m.id,etiquette:m.etiquette,designation:desig(m),detail:[m.coloris,tailleOf(m)].filter(Boolean).join(' · '),qte:l.qte,pa:l.pa}}),
     total:r2(lignes.reduce((t,l)=>t+l.qte*l.pa,0))};
+  if(rec.commandeId){const cf=cfOf(rec.commandeId);if(cf){r.commandeId=cf.id;cfPointer(cf,lignes.map(l=>({montureId:l.montureId,ean:(mon(l.montureId)||{}).ean,qte:l.qte})));cf.receptions=[...(cf.receptions||[]),r.id]}}
   S.receptions.push(r);save();rec=null;stockTab='receptions';location.hash='stock';
   toast(`Entrée ${r.num} validée : ${r.lignes.reduce((t,l)=>t+l.qte,0)} montures ajoutées au stock`);
   setTimeout(()=>labelDialog(r.lignes.map(l=>({montureId:l.montureId,qte:l.qte})),'Étiquettes de l\'entrée '+r.num),60);
@@ -1282,11 +1422,20 @@ function runImport(){
 
 document.addEventListener('click',e=>{
   const sr=e.target.closest('tr.row-link');
-  if(sr&&!e.target.closest('[data-act]')){if(sr.dataset.fid){fournisseurForm(fourOf(sr.dataset.fid));return}if(sr.dataset.mid)montureForm(mon(sr.dataset.mid));else if(sr.dataset.rid)showRec(sr.dataset.rid);return}
+  if(sr&&!e.target.closest('[data-act]')){if(sr.dataset.cfid){cfDetail(sr.dataset.cfid);return}if(sr.dataset.fid){fournisseurForm(fourOf(sr.dataset.fid));return}if(sr.dataset.mid)montureForm(mon(sr.dataset.mid));else if(sr.dataset.rid)showRec(sr.dataset.rid);return}
   const b=e.target.closest('[data-act]');if(!b)return;const id=b.dataset.id;
   const setRq=(v,rel)=>{const l=rec.lignes.find(x=>x.montureId===id);if(!l)return;const q=rel?l.qte+v:v;if(q<=0)rec.lignes=rec.lignes.filter(x=>x!==l);else l.qte=q;drawRec()};
   switch(b.dataset.act){
     case's-tab':stockTab=b.dataset.k;render();break;
+    case'ra-q':if(ra){ra.qte[id]=Math.max(0,(ra.qte[id]||0)+(+b.dataset.d));render()}break;
+    case'ra-xq':if(ra){const x=ra.extra[+b.dataset.i];x.qte=Math.max(0,x.qte+(+b.dataset.d));render()}break;
+    case'ra-ok':raCreate();break;
+    case'cf-open':cfDetail(id);break;
+    case'cf-pdf':{const cf=cfOf(id);if(!cf)break;if(!window.jspdf){toast('Le module PDF n\'a pas pu se charger.');break}offerFile(cfFile(cf),commandePDF(cf));break}
+    case'cf-mail':cfMail(id);break;
+    case'cf-recep':{const cf=cfOf(id);if(!cf)break;closeModal();rec={fournisseurId:cf.fournisseurId,doc:'',date:new Date().toISOString().slice(0,10),lignes:[],commandeId:cf.id};location.hash='entree';break}
+    case'cf-solde':{if(!b.dataset.sure){b.dataset.sure='1';b.textContent='Confirmer : le reliquat ne sera plus attendu';break}const cf=cfOf(id);if(cf){cf.solde=new Date().toISOString();save();render();cfDetail(id);toast('Commande soldée')}break}
+    case'cf-del':{if(!b.dataset.sure){b.dataset.sure='1';b.textContent='Confirmer la suppression';break}S.commandesF=S.commandesF.filter(x=>x.id!==id);save();closeModal();render();toast('Commande supprimée');break}
     case'etq-new':labelDialog([]);setTimeout(()=>$('#etq-scan')?.focus(),50);break;
     case'etq-rec':{const r=S.receptions.find(x=>x.id===id);if(r)labelDialog(r.lignes.map(l=>({montureId:l.montureId,qte:l.qte})),'Étiquettes de l\'entrée '+r.num);break}
     case'etq-one':{const m=mon(id);if(m)labelDialog([{montureId:m.id,qte:Math.max(1,m.qte)}],'Étiquettes '+m.etiquette);break}
@@ -1337,6 +1486,7 @@ document.addEventListener('change',e=>{
   else if(t.dataset.map&&imp){imp.map[t.dataset.map]=t.value===''?null:+t.value;drawImport()}
   else if(t.id==='imp-marque'&&imp){imp.marque=t.value.trim();drawImport()}
   else if(t.id==='imp-four'&&imp){imp.fournisseurId=t.value}
+  else if(t.id==='r-cmd'&&rec){rec.commandeId=t.value||'';const cf=cfOf(rec.commandeId);if(cf){rec.fournisseurId=cf.fournisseurId}render()}
   else if(t.id==='r-four'&&rec){if(t.value==='__new'){fournisseurForm(null,f=>{rec.fournisseurId=f.id;render()});t.value=rec.fournisseurId||''}else{rec.fournisseurId=t.value;render()}}
   else if(t.id==='ff')fillStock();
   else if(t.dataset.coef!=null){
@@ -1484,6 +1634,15 @@ function impayesView(){
    <div class="kpi"><span class="k">Dont en retard</span><span class="v ${lateT?'down':''}">${money(lateT)}</span><span class="d" style="color:var(--muted)">${late.length} facture${late.length>1?'s':''}</span></div>
    <div class="kpi"><span class="k">Clients au-delà du plafond</span><span class="v ${over.length?'down':''}">${over.length}</span><span class="d" style="color:var(--muted)">${over.map(c=>esc(c.nom)).join(', ')||'aucun'}</span></div>
    <div class="kpi"><span class="k">Encaissé ce mois</span><span class="v">${money(S.reglements.filter(r=>r.date.slice(0,7)===isoD(new Date()).slice(0,7)).reduce((t,r)=>t+r.montant,0))}</span></div></div>
+  ${(()=>{const byC=new Map();late.forEach(v=>{const k=v.clientId;if(!byC.has(k))byC.set(k,[]);byC.get(k).push(v)});
+    if(!byC.size)return'';const rows=[...byC.entries()].map(([cid,vs])=>{const c=cli(cid)||{},r=(c.relances||[]).slice(-1)[0],tot=vs.reduce((t,v)=>t+resteOf(v),0),maxJ=Math.max(...vs.map(retardJ));
+      return{cid,c,r,tot,maxJ,n:vs.length,recent:r&&(Date.now()-new Date(r.date))<7*864e5}}).sort((a,b)=>(a.recent-b.recent)||b.tot-a.tot);
+    return`<section class="panel"><h3>Relances à faire</h3><p class="hint" style="margin-top:-4px">Clients ayant au moins une facture échue. Un client relancé il y a moins de 7 jours passe en fin de liste.</p>
+    <div class="table-wrap"><table><thead><tr><th>Client</th><th class="num">Factures échues</th><th class="num">Montant échu</th><th class="num">Retard max.</th><th>Dernière relance</th><th></th></tr></thead><tbody>
+    ${rows.map(x=>`<tr><td><a class="plain" href="#client-${x.cid}"><b>${esc(x.c.nom||'Client supprimé')}</b></a>${x.c.email?'':'<span class="sub warn-txt">Pas d\'e-mail dans la fiche</span>'}</td><td class="num">${x.n}</td><td class="num"><b>${money(x.tot)}</b></td><td class="num">${x.maxJ} j</td>
+      <td>${x.r?`${dF.format(new Date(x.r.date))}<span class="sub">${esc(x.r.par||'')} · ${x.r.mode==='mail'?'e-mail':'messagerie'}</span>`:'<span class="sub-cell">Jamais</span>'}</td>
+      <td class="num"><span class="row-btns"><button class="btn small" data-act="rel-pdf" data-id="${x.cid}">Relevé</button><button class="btn small ${x.recent?'':'primary'}" data-act="rel-send" data-id="${x.cid}">Relancer</button></span></td></tr>`).join('')}
+    </tbody></table></div></section>`})()}
   <section class="panel"><h3>Factures à encaisser</h3>
   ${open.length?`<div class="table-wrap"><table><thead><tr><th>Facture</th><th>Client</th><th>Échéance</th><th class="num">TTC</th><th class="num">Réglé</th><th class="num">Reste</th><th></th></tr></thead><tbody>
   ${open.map(v=>{const c=cli(v.clientId),rj=retardJ(v);return`<tr class="row-link" data-vid="${v.id}" tabindex="0"><td class="mono">${v.facture}<span class="sub">${dF.format(new Date(v.date))}</span></td>
@@ -1493,6 +1652,86 @@ function impayesView(){
     <td class="num"><button class="btn small" data-act="k-pay" data-id="${v.id}">Encaisser</button></td></tr>`}).join('')}
   </tbody></table></div>`:'<p class="muted">Toutes les factures sont réglées.</p>'}</section>
   <section class="panel"><h3>Derniers règlements</h3>${last.length?regTable(last):'<p class="muted">Aucun règlement enregistré.</p>'}</section>`;
+}
+/* ---------- Relevé de compte et relances ---------- */
+const openOf=cid=>S.ventes.filter(v=>v.clientId===cid&&resteOf(v)>0.005).sort((a,b)=>a.echeance.localeCompare(b.echeance));
+const releveFile=c=>`Releve de compte ${(c.nom||'client').replace(/[\\/:*?"<>|]/g,'')} ${isoD(new Date())}.pdf`;
+function relevePDF(cid){
+  const c=cli(cid)||{},p=paysByCode(c.pays),s=S.societe,vs=openOf(cid);const {jsPDF}=window.jspdf;const pdf=new jsPDF({unit:'mm',format:'a4'});
+  const txt=x=>String(x??'').replace(/[  ]/g,' ').replace(/□/g,'/').replace(/[−–]/g,'-');const eur=n=>txt(money(n));
+  const W=210,L=16,R=W-16;let y=18;
+  pdf.setFont('helvetica','bold');pdf.setFontSize(15);pdf.text(txt(s.nom||'Votre société'),L,y);
+  pdf.setFont('helvetica','normal');pdf.setFontSize(8.5);pdf.setTextColor(80);
+  const sl=[s.adresse,[s.cp,s.ville].filter(Boolean).join(' '),[s.tel,s.email].filter(Boolean).join(' · '),s.siren?'SIREN '+s.siren:''].filter(Boolean);sl.forEach((t,i)=>pdf.text(txt(t),L,y+5+i*4));
+  pdf.setTextColor(0);pdf.setFont('helvetica','bold');pdf.setFontSize(17);pdf.text('RELEVÉ DE COMPTE',R,y,{align:'right'});
+  pdf.setFont('helvetica','normal');pdf.setFontSize(9);pdf.text(txt('Au '+dF.format(new Date())),R,y+7,{align:'right'});pdf.text(txt('Client '+codeOf(c)),R,y+11.5,{align:'right'});
+  y=Math.max(y+5+sl.length*4,y+20)+8;
+  pdf.setFillColor(246,248,250);pdf.roundedRect(110,y,R-110,28,2,2,'F');pdf.setFont('helvetica','bold');pdf.setFontSize(10.5);pdf.text(txt(c.nom||''),114,y+8);
+  pdf.setFont('helvetica','normal');pdf.setFontSize(8.8);[...(c.adresse||'').split('\n'),[c.ville,p?p[1]:''].filter(Boolean).join(', ')].filter(Boolean).slice(0,3).forEach((t,i)=>pdf.text(txt(t),114,y+13+i*4.2));
+  y+=36;
+  const today=isoD(new Date());
+  const body=vs.map(v=>{const rj=retardJ(v);return[txt(v.facture),dF.format(new Date(v.date)),dF.format(new Date(v.echeance)),eur(v.ttc),avoirTTC(v)?'-'+eur(avoirTTC(v)):'',paidOf(v)?'-'+eur(paidOf(v)):'',eur(resteOf(v)),rj>0?rj+' j':'']});
+  pdf.autoTable({startY:y,head:[['Facture','Date','Échéance','Montant TTC','Avoirs','Réglé','Reste dû','Retard']],body,margin:{left:L,right:16},styles:{font:'helvetica',fontSize:8.6,cellPadding:2},headStyles:{fillColor:[10,102,112],textColor:255},
+    columnStyles:{3:{halign:'right'},4:{halign:'right'},5:{halign:'right'},6:{halign:'right',fontStyle:'bold'},7:{halign:'right'}},
+    didParseCell:h=>{if(h.section==='body'&&h.column.index===7&&h.cell.raw)h.cell.styles.textColor=[180,35,24]}});
+  y=pdf.lastAutoTable.finalY+7;
+  const tot=vs.reduce((t,v)=>t+resteOf(v),0),echu=vs.filter(v=>v.echeance<today).reduce((t,v)=>t+resteOf(v),0);
+  [['Total dû',eur(tot)],['Dont échu',eur(echu)]].forEach(([k,val],i)=>{pdf.setFont('helvetica',i?'normal':'bold');pdf.setFontSize(i?9.2:11);pdf.text(txt(k),122,y);pdf.text(val,R,y,{align:'right'});y+=i?5:6});
+  if(showCFA(c)){pdf.setFontSize(8.2);pdf.setTextColor(90);pdf.text(txt(cfaNote(tot)),R,y,{align:'right'});pdf.setTextColor(0);y+=5}
+  y+=4;pdf.setFont('helvetica','normal');pdf.setFontSize(8.6);
+  [s.iban?`Règlement par virement : ${s.banque?s.banque+' · ':''}IBAN ${s.iban}${s.bic?' · BIC '+s.bic:''}. Merci d'indiquer les numéros de facture en référence.`:'',
+   'Si vous avez réglé ces factures entre-temps, merci de ne pas tenir compte de ce relevé.'].filter(Boolean).forEach(t=>{const w=pdf.splitTextToSize(txt(t),R-L);pdf.text(w,L,y);y+=w.length*4+2});
+  return pdf.output('arraybuffer');
+}
+function downloadReleve(cid){
+  if(!window.jspdf){toast('Le module PDF n\'a pas pu se charger. Vérifiez la connexion internet.');return}
+  const c=cli(cid);if(!c)return;if(!openOf(cid).length){toast('Ce client n\'a aucune facture à régler.');return}
+  offerFile(releveFile(c),relevePDF(cid));
+}
+function relanceForm(cid){
+  const c=cli(cid);if(!c)return;const vs=openOf(cid);if(!vs.length){toast('Ce client n\'a aucune facture à régler.');return}
+  const mail=window.__PRISMEA__.mail||{},sig=(window.__PRISMEA__.user||{}).nom||'',today=isoD(new Date());
+  const echues=vs.filter(v=>v.echeance<today),tot=vs.reduce((t,v)=>t+resteOf(v),0),nb=(c.relances||[]).length;
+  const list=vs.map(v=>`- ${v.facture} du ${dF.format(new Date(v.date))}, échéance ${dF.format(new Date(v.echeance))} : ${money(resteOf(v)).replace(/ /g,' ')}${v.echeance<today?` (${retardJ(v)} jours de retard)`:''}`).join('\n');
+  const msg=`Bonjour${c.contact?' '+c.contact:''},
+
+${nb?'Sauf erreur de notre part, nous restons dans l\'attente du règlement':'Sauf erreur de notre part, les factures suivantes restent à régler'}${echues.length?` (${echues.length} facture${echues.length>1?'s':''} échue${echues.length>1?'s':''})`:''} :
+
+${list}
+
+Total dû : ${money(tot).replace(/ /g,' ')}${showCFA(c)?' (soit '+cfa(tot).replace(/ /g,' ')+')':''}.
+
+Vous trouverez ci-joint votre relevé de compte.${S.societe.iban?` Le règlement peut être effectué par virement sur notre compte IBAN ${S.societe.iban}${S.societe.bic?' (BIC '+S.societe.bic+')':''}, en indiquant les numéros de facture en référence.`:''}
+
+Si le règlement a déjà été effectué, merci de ne pas tenir compte de ce message.
+
+Cordialement,
+${sig}
+${S.societe.nom||''}`;
+  openModal('Relancer '+c.nom,`${vs.length} facture${vs.length>1?'s':''} à régler · ${money(tot)}${nb?` · relance n° ${nb+1}`:''}`,`<fieldset>
+    <label class="full">Destinataire<input id="rl-to" type="email" value="${esc(c.email||'')}" placeholder="adresse@client.com"></label>
+    <label class="full">Objet<input id="rl-subj" value="${esc(`${nb?'Relance':'Rappel'} : factures en attente de règlement – ${S.societe.nom||''}`)}"></label>
+    <label class="full">Message<textarea id="rl-msg" rows="14">${esc(msg)}</textarea></label></fieldset>
+    <p class="hint" style="margin:0">Le relevé de compte PDF est joint automatiquement.</p>
+    ${mail.configured?'':'<div class="lu-box warn">L\'envoi direct depuis Prismea n\'est pas encore activé. Le bouton télécharge le relevé et ouvre votre messagerie avec le message prêt : il vous restera à y joindre le PDF.</div>'}`,
+  `<button class="btn" data-act="close">Annuler</button><button class="btn primary" id="rl-ok">${mail.configured?'Envoyer la relance':'Télécharger et ouvrir ma messagerie'}</button>`,()=>{
+    $('.modal-card').classList.add('wide');
+    $('#rl-ok').onclick=async()=>{
+      const to=$('#rl-to').value.trim(),subj=$('#rl-subj').value.trim(),text=$('#rl-msg').value;
+      if(!/^\S+@\S+\.\S+$/.test(to)){toast('Saisissez une adresse e-mail valide.');$('#rl-to').focus();return}
+      if(!window.jspdf){toast('Le module PDF n\'a pas pu se charger.');return}
+      const btn=$('#rl-ok');btn.disabled=true;btn.textContent='Préparation…';const ab=relevePDF(cid);
+      try{
+        if(mail.configured){btn.textContent='Envoi…';
+          const r=await fetch('/api/mail',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({to,subject:subj,text,replyTo:S.societe.email||'',attachments:[{name:releveFile(c),content:abToB64(ab)}]})});
+          if(!r.ok)throw new Error('envoi')}
+        else{await offerFile(releveFile(c),new Blob([ab],{type:'application/pdf'}));const a=document.createElement('a');a.href=`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(text)}`;a.click()}
+        if(!c.email)c.email=to;
+        c.relances=c.relances||[];c.relances.push({date:new Date().toISOString(),par:sig,a:to,montant:r2(tot),factures:vs.map(v=>v.facture),mode:mail.configured?'mail':'messagerie'});
+        save();closeModal();render();toast(mail.configured?`Relance envoyée à ${to}`:'Relevé téléchargé : joignez-le au message ouvert dans votre messagerie');
+      }catch(e){btn.disabled=false;btn.textContent=mail.configured?'Envoyer la relance':'Télécharger et ouvrir ma messagerie';toast('L\'envoi a échoué. Réessayez.')}
+    };
+  });
 }
 function regTable(list){
   return`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Facture</th><th>Client</th><th>Mode</th><th>Banque / référence</th><th class="num">Montant</th></tr></thead><tbody>
@@ -1576,7 +1815,7 @@ function venteDetail(id,tab){
   <div class="table-wrap"><table><thead><tr><th>Monture</th><th class="num">Qté</th><th class="num">PU HT</th><th class="num">Montant HT</th></tr></thead><tbody>
   ${v.lignes.map(l=>`<tr><td><b>${esc(l.designation)}</b><span class="sub"><span class="mono">${esc(l.etiquette)}</span>${l.detail?' · '+esc(l.detail):''}</span></td><td class="num">${l.qte}</td><td class="num">${puCell(l)}</td><td class="num">${money(lineHT(l))}</td></tr>`).join('')}
   </tbody></table></div>
-  <dl class="totals" style="max-width:320px;margin-left:auto">${remTotals(v)}${taxLines(v,regOf(v),v.tvaIntra)}</dl>${avoirBlock(v)}${dioBlock(v,c)}`;
+  <dl class="totals" style="max-width:320px;margin-left:auto">${remTotals(v)}${taxLines(v,regOf(v),v.tvaIntra)}${showCFA(c)?`<dd class="legal">Soit ${cfa(v.ttc)}</dd>`:''}</dl>${avoirBlock(v)}${dioBlock(v,c)}`;
   else if(vdTab==='reglements')body=`${regs.length?`<div class="docs">${regs.map(r=>`<div class="doc-row static"><span><b>${money(r.montant)}</b><span class="sub">${dF.format(new Date(r.date))} · ${r.remboursement?'Remboursement · ':''}${esc(r.mode)}${regInfo(r)?' · '+esc(regInfo(r)):''}</span>${r.justifBanque?`<span class="sub" style="color:var(--ok)">Justifié à la banque le ${dF.format(new Date(r.justifBanque.le))}</span>`:''}</span><span class="row-btns">${/Virement/.test(r.mode)&&!r.remboursement?`<button class="btn small" data-act="bk-open" data-id="${v.id}" data-rid="${r.id}">${r.justifBanque?'Renvoyer à la banque':'Justifier à la banque'}</button>`:''}${closedWeek(r.date)?'<span class="hint">Semaine clôturée</span>':`<button class="link danger-link" data-act="k-regdel" data-id="${r.id}">Supprimer</button>`}</span></div>`).join('')}</div>`:'<p class="muted">Aucun règlement pour cette facture.</p>'}
   <dl class="totals" style="max-width:320px;margin-left:auto"><dt>Total facturé</dt><dd>${money(v.ttc)}</dd>${avoirTTC(v)?`<dt>Avoirs</dt><dd>−${money(avoirTTC(v))}</dd>`:''}<dt>Réglé</dt><dd>${money(paidOf(v))}</dd><dt class="big">Reste à payer</dt><dd class="big">${money(resteOf(v))}</dd></dl>`;
   else if(vdTab==='documents')body=attBlock(v)+`${assetsNS?`<label class="drop small" id="vd-drop" for="vd-file"><b>Ajouter des documents</b><span>Bordereau DHL, facture, photo… · PDF ou image, 20 Mo maximum</span>
@@ -1737,6 +1976,7 @@ function viewParametres(){
       <label>Banque<input id="s-banque" value="${v('banque')}"></label>
       <label>E-mail du conseiller bancaire<input id="s-mailbq" type="email" value="${v('emailBanque')}" placeholder="Pour les justificatifs de virement"></label>
       <label>Délai de paiement<span class="suffix"><input id="s-delai" type="number" min="0" value="${s.delai??30}"><span>jours</span></span></label>
+      <label class="check full"><input type="checkbox" id="s-fcfa" ${s.fcfa===false?'':'checked'}> Afficher la contre-valeur en FCFA pour les clients de la zone franc (CEMAC, UEMOA)</label>
       <label>Transporteur par défaut<select id="s-transp">${Object.keys(TRANSPORTEURS).map(t=>`<option ${t===(s.transporteur||'DHL')?'selected':''}>${t}</option>`).join('')}</select></label>
     </fieldset></section>
   <div class="settings-save"><button class="btn primary" data-act="set-save">Enregistrer les paramètres</button></div>
@@ -1841,6 +2081,7 @@ function avoirPDF(a){
   y=pdf.lastAutoTable.finalY+6;
   const tot=[['Total HT',eur(a.ht)]];if(reg==='fr')tot.push(['TVA 20 %',eur(a.tva)]);else tot.push(['TVA','Non applicable']);tot.push(["Montant de l'avoir",eur(a.ttc)]);
   tot.forEach(([k,val],i)=>{const last=i===tot.length-1;pdf.setFont('helvetica',last?'bold':'normal');pdf.setFontSize(last?11:9.2);if(last){pdf.setDrawColor(10,102,112);pdf.line(120,y-4,R,y-4)}pdf.text(txt(k),122,y);pdf.text(val,R,y,{align:'right'});y+=last?7:5});
+  if(showCFA(c)){pdf.setFontSize(8.2);pdf.setTextColor(90);pdf.text(txt(cfaNote(a.ttc)),R,y,{align:'right'});pdf.setTextColor(0);y+=4}
   y+=4;pdf.setFont('helvetica','normal');pdf.setFontSize(8.5);
   const legal=reg==='fr'?'':reg==='ue'?`Exonération de TVA, article 262 ter I du CGI (livraison intracommunautaire). Autoliquidation par le client${a.tvaIntra?', n° TVA '+a.tvaIntra:''}.`:'Exonération de TVA, article 262 I du CGI (exportation).';
   [legal,`Cet avoir vient en déduction de la facture ${a.facture}. Le montant non utilisé sur cette facture sera remboursé ou déduit d'une prochaine facture.`].filter(Boolean)
@@ -1931,10 +2172,12 @@ function invoicePDF(v){
   if(v.rem)tot.push([txt(remCliLabel(v)),'-'+eur(v.rem)]);
   tot.push(['Total HT',eur(v.ht)]);
   if(reg==='fr')tot.push(['TVA 20 %',eur(v.tva)],['Total TTC',eur(v.ttc)]);else tot.push(['TVA','Non applicable']);
+  if(avoirTTC(v))tot.push(['Avoirs','-'+eur(avoirTTC(v))]);
   const paid=paidOf(v);if(paid>0)tot.push(['Déjà réglé','-'+eur(paid)]);
   tot.push(['Net à payer',eur(resteOf(v))]);
   tot.forEach(([k,val],i)=>{const last=i===tot.length-1;pdf.setFont('helvetica',last?'bold':'normal');pdf.setFontSize(last?11:9.2);
     if(last){pdf.setDrawColor(10,102,112);pdf.line(120,y-4,R,y-4)}pdf.text(txt(k),122,y);pdf.text(val,R,y,{align:'right'});y+=last?7:5});
+  if(showCFA(c)){pdf.setFont('helvetica','normal');pdf.setFontSize(8.2);pdf.setTextColor(90);pdf.text(txt(cfaNote(v.ttc)),R,y,{align:'right'});pdf.setTextColor(0);y+=4}
   y+=4;pdf.setFont('helvetica','normal');pdf.setFontSize(8.5);
   const legal=reg==='fr'?'':reg==='ue'?`Exonération de TVA, article 262 ter I du CGI (livraison intracommunautaire). Autoliquidation par le client${v.tvaIntra?', n° TVA '+v.tvaIntra:''}.`:'Exonération de TVA, article 262 I du CGI (exportation).';
   const lines=[legal,
@@ -2014,7 +2257,7 @@ document.addEventListener('click',e=>{
     case'set-save':{
       const m={nom:'s-nom',forme:'s-forme',capital:'s-capital',adresse:'s-adresse',cp:'s-cp',ville:'s-ville',tel:'s-tel',email:'s-email',siren:'s-siren',rcs:'s-rcs',tvaIntra:'s-tva',iban:'s-iban',emailBanque:'s-mailbq',bic:'s-bic',banque:'s-banque'};
       Object.entries(m).forEach(([k,i])=>S.societe[k]=$('#'+i).value.trim());
-      S.societe.delai=Math.max(0,Math.round(+$('#s-delai').value||0));S.societe.transporteur=$('#s-transp').value;
+      S.societe.delai=Math.max(0,Math.round(+$('#s-delai').value||0));S.societe.transporteur=$('#s-transp').value;S.societe.fcfa=$('#s-fcfa').checked;
       if(!S.societe.nom||!S.societe.adresse||!S.societe.siren)toast('Paramètres enregistrés. Pensez à compléter la raison sociale, l\'adresse et le SIREN.');else toast('Paramètres enregistrés');
       save();break}
     case'dio-save':case'dio-del':{
@@ -2031,6 +2274,8 @@ document.addEventListener('click',e=>{
         .then(r=>{if(!r.ok)throw 0;location.reload()}).catch(()=>{b.disabled=false;b.textContent='Confirmer la restauration';toast('La restauration a échoué.')})}break;
     case'k-open':venteDetail(id);break;
     case'k-pay':payForm(id);break;
+    case'rel-pdf':downloadReleve(id);break;
+    case'rel-send':relanceForm(id);break;
     case'k-pdf':downloadInvoice(id);break;
     case'k-dtva':dossierTVA(journalRows(),`Dossier TVA - ${periodLabel()}.csv`);break;
     case'k-csv':journalCSV(journalRows(),`Journal des ventes - ${periodLabel()}.csv`);break;
@@ -2832,6 +3077,7 @@ function render(){
   else if(r.startsWith('client-'))$('#app').innerHTML=viewClient(r.slice(7));
   else if(r.startsWith('vente-')||r.startsWith('devis-')){const k=r.slice(0,5);$('#app').innerHTML=viewDoc(k,r.slice(6));if(doc){drawDoc();$('#scan')?.focus()}}
   else if(r==='stock'){$('#app').innerHTML=viewStock();fillStock()}
+  else if(r==='reassort'){$('#app').innerHTML=viewReassort();bindReassort()}
   else if(r==='entree'){$('#app').innerHTML=viewEntree();drawRec();$('#rscan')?.focus()}
   else if(r==='catalogue'){$('#app').innerHTML=viewCatalogue();bindImport();if(imp)drawImport()}
   else if(r==='caisse')$('#app').innerHTML=viewCaisse();

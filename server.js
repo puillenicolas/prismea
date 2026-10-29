@@ -24,8 +24,8 @@ const USERS = [
 ];
 
 /* Collections synchronisées (tableaux du state) ; le reste du state est en « meta » */
-const KINDS = ['clients', 'montures', 'ventes', 'devis', 'receptions', 'reglements', 'clotures', 'catalogue', 'marques', 'fournisseurs', 'facturesF', 'photos', 'avoirs'];
-const SEQ_NAMES = { V: 'seqV', FA: 'seqFA', M: 'seqM', D: 'seqD', R: 'seqR', C: 'seq', F: 'seqF', AV: 'seqAV' };
+const KINDS = ['clients', 'montures', 'ventes', 'devis', 'receptions', 'reglements', 'clotures', 'catalogue', 'marques', 'fournisseurs', 'facturesF', 'photos', 'avoirs', 'commandesF'];
+const SEQ_NAMES = { V: 'seqV', FA: 'seqFA', M: 'seqM', D: 'seqD', R: 'seqR', C: 'seq', F: 'seqF', AV: 'seqAV', CF: 'seqCF' };
 
 const app = express();
 app.set('trust proxy', 1);
