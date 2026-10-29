@@ -107,6 +107,9 @@ function taxLines(t,reg,intra){
   return`<dt>TVA</dt><dd>Non applicable</dd><dt class="big">Total HT</dt><dd class="big">${money(t.ht)}</dd><dd class="legal">${legal}</dd>`;
 }
 const normEAN=v=>String(v??'').replace(/\D/g,'').replace(/^0+/,'');
+/* Matière de la monture ; codes OPTO11 (caractéristique matière EDI-Optique) tels qu'utilisés par les fournisseurs */
+const MATIERES=['Acétate','Métal','Mixte (métal et plastique)','Titane','Plastique injecté','Percée','Bois','Autre'];
+const OPTO_MAT={A:'Acétate',B:'Mixte (métal et plastique)',C:'Métal',F:'Percée'};
 const tailleOf=m=>m.calibre?`${m.calibre}□${m.pont||''}${m.branche?' '+m.branche:''}`:(m.taille||'');
 function findMonture(code){
   const c=code.trim();if(!c)return null;const lc=c.toLowerCase(),k=normEAN(c);
@@ -522,7 +525,7 @@ function fillStock(){
   const q=($('#qs')?.value||'').toLowerCase().trim(),fm=$('#fm')?.value||'',fa=$('#fa')?.value||'',ff=$('#ff')?.value||'',qe=normEAN(q);
   const list=S.montures.filter(m=>(!fm||m.marque===fm)&&(!ff||(marqueOfName(m.marque)||{}).fournisseurId===ff)&&(!fa||m.qte<=m.seuil)&&(!q||[m.etiquette,m.marque,m.modele,m.coloris].join(' ').toLowerCase().includes(q)||(qe.length>=4&&normEAN(m.ean).includes(qe))))
     .sort((a,b)=>(a.marque+a.modele+a.coloris).localeCompare(b.marque+b.modele+b.coloris,'fr'));
-  b.innerHTML=list.length?list.map(m=>`<tr class="row-link" data-mid="${m.id}" tabindex="0"><td class="td-thumb">${thumb(m)}</td><td class="mono">${esc(m.etiquette)}</td><td><b>${esc(desig(m))}</b><span class="sub">${esc(m.coloris||'')}</span></td><td class="mono">${esc(tailleOf(m))}</td><td class="mono sub-cell">${esc(fmtEAN(m.ean))}</td><td class="num">${money(m.pa)}</td><td class="num">${money(m.pv)}</td><td class="num">${stockState(m)}</td></tr>`).join('')
+  b.innerHTML=list.length?list.map(m=>`<tr class="row-link" data-mid="${m.id}" tabindex="0"><td class="td-thumb">${thumb(m)}</td><td class="mono">${esc(m.etiquette)}</td><td><b>${esc(desig(m))}</b><span class="sub">${esc([m.coloris,m.matiere].filter(Boolean).join(' · '))}</span></td><td class="mono">${esc(tailleOf(m))}</td><td class="mono sub-cell">${esc(fmtEAN(m.ean))}</td><td class="num">${money(m.pa)}</td><td class="num">${money(m.pv)}</td><td class="num">${stockState(m)}</td></tr>`).join('')
     :'<tr><td colspan="8"><div class="empty-state" style="padding:32px 12px"><p>Aucune monture ne correspond.</p></div></td></tr>';
   $('#scount').textContent=`${list.length} référence${list.length>1?'s':''} sur ${S.montures.length}`;
 }
@@ -547,7 +550,8 @@ function montureForm(m,onSaved){
     <label>Marque <span class="req">*</span><input id="m-marque" value="${v('marque')}" list="dl-marques"></label>
     <datalist id="dl-marques">${marques.map(x=>`<option value="${esc(x)}"></option>`).join('')}</datalist>
     <label>Modèle <span class="req">*</span><input id="m-modele" value="${v('modele')}"></label>
-    <label class="full">Coloris<input id="m-coloris" value="${v('coloris')}"></label>
+    <label>Coloris<input id="m-coloris" value="${v('coloris')}"></label>
+    <label>Matière<select id="m-mat"><option value="">Non renseignée</option>${[...new Set([...MATIERES,...(m.matiere?[m.matiere]:[])])].map(x=>`<option ${x===m.matiere?'selected':''}>${esc(x)}</option>`).join('')}</select></label>
   </fieldset>
   <fieldset class="three"><legend>Taille</legend>
     <label>Calibre<input id="m-cal" type="number" min="0" value="${v('calibre')}" placeholder="52"></label>
@@ -579,7 +583,7 @@ function montureForm(m,onSaved){
     };
     ['m-marque','m-pa'].forEach(i=>$('#'+i).addEventListener('input',syncPv));$('#m-man').addEventListener('change',syncPv);syncPv();
     $('#m-ok').onclick=async()=>{
-      const d={ean:$('#m-ean').value.trim(),marque:$('#m-marque').value.trim(),modele:$('#m-modele').value.trim(),coloris:$('#m-coloris').value.trim(),
+      const d={ean:$('#m-ean').value.trim(),marque:$('#m-marque').value.trim(),modele:$('#m-modele').value.trim(),coloris:$('#m-coloris').value.trim(),matiere:$('#m-mat').value,
         calibre:$('#m-cal').value.trim(),pont:$('#m-pont').value.trim(),branche:$('#m-br').value.trim(),
         pa:r2(+$('#m-pa').value||0),pv:r2(+$('#m-pv').value||0),pvManuel:!!(coefOf($('#m-marque').value.trim())&&$('#m-man').checked),seuil:Math.max(0,Math.round(+$('#m-seuil').value||0))};
       if(!d.marque||!d.modele){toast('La marque et le modèle sont obligatoires.');return}
@@ -594,7 +598,7 @@ function montureForm(m,onSaved){
   });
 }
 async function montureFromCatalogue(c){
-  const m={id:'m'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),etiquette:await nextEtiquette(c.marque),ean:c.ean,marque:ensureMarque(c.marque).nom,modele:c.modele,coloris:c.coloris||'',
+  const m={id:'m'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),etiquette:await nextEtiquette(c.marque),ean:c.ean,marque:ensureMarque(c.marque).nom,modele:c.modele,coloris:c.coloris||'',matiere:c.matiere||'',
     calibre:c.calibre||'',pont:c.pont||'',branche:c.branche||'',pa:c.pa||0,pv:c.pv||0,seuil:2,qte:0};
   applyCoef(m);S.montures.push(m);save();return m;
 }
@@ -798,6 +802,7 @@ const CAT_FIELDS=[
   ['calibre','Calibre',false,/(calibre|eye|lens.?width|caliber|taille.?verre|boxing.?a|(^|\W)a$)/],
   ['pont','Pont',false,/(pont|bridge|dbl)/],
   ['branche','Branche',false,/(branche|temple|arm\b|arm_|length)/],
+  ['matiere','Matière',false,/(matiere|material|materiau)/],
   ['taille','Taille complète (52-18-140)',false,/(taille|size|dimension)/],
   ['pa','Prix d\'achat HT',false,/(achat|wholesale|whs|cost|prix.?net|net.?price|purchase|gros|tarif|pa\b|ppht|buy)/],
   ['pv','Prix de vente HT (sans coefficient)',false,/(vente|retail|pvc|rrp|msrp|public|selling|pv\b|consumer|sale)/]
@@ -975,7 +980,7 @@ function optoRows(xd){
   const sup=deep(xd,'SupplierOpticParty')||deep(xd,'ProviderOpticParty')||deep(xd,'ManufacturerOpticParty');
   const supNom=sup?tx(sup,'Name'):'';
   const SOL=/Sunglass/i;
-  const head=['GTIN','Marque','Modèle','Coloris','Calibre','Pont','Branche','Prix net d\'achat','Prix public','Type','Code douanier'];
+  const head=['GTIN','Marque','Modèle','Coloris','Calibre','Pont','Branche','Prix net d\'achat','Prix public','Type','Code douanier','Matière'];
   const rows=[];
   items.forEach(it=>{
     if(tx(it,'ActionCode')==='3')return; // article retiré du catalogue
@@ -988,12 +993,14 @@ function optoRows(xd){
     const coul=[cc,info&&info!==cc?info:(cdesc&&cdesc!==cc?cdesc:'')].filter(Boolean).join(' ');
     let pa='',pv='';[...it.getElementsByTagNameNS('*','AssignedOpticPrice')].forEach(ap=>{const t=tx(ap,'TypeCode'),v=tx(ap,'ChargeAmount');if(/^(AAA|AAB|NET|INV)$/i.test(t)&&pa==='')pa=v;else if(/^(RRP|RTP|SRP|PUB|AAE)$/i.test(t)&&pv==='')pv=v});
     const sub=(deep(p,'SubClassCode')||{}).textContent||'';
-    rows.push([ean,tx(p,'BrandName')||tx(p,'SubBrandName'),modele,coul,ch['482']||'',ch['518']||'',ch['485']||'',pa,pv,SOL.test(sub)?'Solaire':'Optique',ch['977']||'']);
+    const mc=kids(p,'ComposedOpticMaterial').map(x=>tx(x,'ID')).filter(Boolean);
+    const mat=mc.length>1?'Mixte (métal et plastique)':mc.length?(OPTO_MAT[mc[0].toUpperCase()]||'Code '+mc[0]):'';
+    rows.push([ean,tx(p,'BrandName')||tx(p,'SubBrandName'),modele,coul,ch['482']||'',ch['518']||'',ch['485']||'',pa,pv,SOL.test(sub)?'Solaire':'Optique',ch['977']||'',mat]);
   });
   if(!rows.length)return null;
   const brands=[...new Set(rows.map(r=>r[1]).filter(Boolean))];
   return{rows:[head,...rows],info:`Norme ${fmt}${supNom?' · fournisseur '+supNom:''} · ${brands.length} marque${brands.length>1?'s':''} : ${brands.join(', ')}`,
-    map:{ean:0,marque:1,modele:2,coloris:3,calibre:4,pont:5,branche:6,pa:7,pv:rows.some(r=>r[8])?8:undefined},fournisseur:supNom,opto:true};
+    map:{ean:0,marque:1,modele:2,coloris:3,calibre:4,pont:5,branche:6,pa:7,pv:rows.some(r=>r[8])?8:undefined,matiere:rows.some(r=>r[11])?11:undefined},fournisseur:supNom,opto:true};
 }
 function prepareImport(name,rows,info,x){
   rows=rows.filter(r=>r.some(c=>String(c).trim()!==''));
@@ -1021,7 +1028,7 @@ function mappedRows(){
   const {data,map}=imp;const g=(r,k)=>map[k]!=null?r[map[k]]:'';
   return data.map(r=>{
     const o={ean:cellEAN(g(r,'ean')),marque:String(g(r,'marque')||imp.marque||'').trim(),modele:String(g(r,'modele')||'').trim(),coloris:String(g(r,'coloris')||'').trim(),
-      calibre:String(g(r,'calibre')||'').trim(),pont:String(g(r,'pont')||'').trim(),branche:String(g(r,'branche')||'').trim(),pa:r2(parseNum(g(r,'pa'))),pv:r2(parseNum(g(r,'pv')))};
+      matiere:String(g(r,'matiere')||'').trim(),calibre:String(g(r,'calibre')||'').trim(),pont:String(g(r,'pont')||'').trim(),branche:String(g(r,'branche')||'').trim(),pa:r2(parseNum(g(r,'pa'))),pv:r2(parseNum(g(r,'pv')))};
     const t=String(g(r,'taille')||'');const x=t.match(/(\d{2})\D+(\d{1,2})(?:\D+(\d{3}))?/);
     if(x){o.calibre=o.calibre||x[1];o.pont=o.pont||x[2];o.branche=o.branche||x[3]||''}
     if(o.marque&&o.modele.toLowerCase().startsWith(o.marque.toLowerCase()+' '))o.modele=o.modele.slice(o.marque.length+1).trim();
@@ -1042,8 +1049,8 @@ function drawImport(){
     <label>Fournisseur ${brandsOf().length>1?'des marques':'de la marque'}<select id="imp-four">${imp.fournisseurNom&&!S.fournisseurs.some(f=>normTxtF(f.nom)===normTxtF(imp.fournisseurNom))?`<option value="__opto" ${imp.fournisseurId==='__opto'?'selected':''}>Créer le fournisseur « ${esc(imp.fournisseurNom)} »</option>`:''}${fourOptions(imp.fournisseurId==='__opto'?'':imp.fournisseurId||(marqueOfName(imp.marque)||{}).fournisseurId||'',false)}</select></label>
     <label>Coefficient de la marque<span class="suffix"><input id="imp-coef" type="number" min="0" step="0.05" value="${esc(imp.coef)}" placeholder="${coefOf(imp.marque)?fmtCoef(coefOf(imp.marque)):'ex. 2,2'}"><span>× achat</span></span><span class="hint">Prix de vente = prix d'achat × coefficient, arrondi au centime. ${brandsOf().length>1?`Appliqué aux ${brandsOf().length} marques du fichier (${brandsOf().map(esc).join(', ')}) ; laissez vide pour garder le coefficient de chaque marque.`:'Enregistré pour la marque.'}</span></label></div>
   <h3 style="margin-top:18px">Aperçu</h3>
-  <div class="table-wrap"><table><thead><tr><th>EAN</th><th>Marque</th><th>Modèle</th><th>Coloris</th><th>Taille</th><th class="num">Achat HT</th><th class="num">Vente HT</th></tr></thead><tbody>
-  ${rows.slice(0,8).map(r=>{const bad=!(normEAN(r.ean).length>=8&&r.modele&&r.marque);return`<tr class="${bad?'bad-row':''}"><td class="mono">${esc(r.ean)||'<span class="warn-txt">manquant</span>'}</td><td>${esc(r.marque)||'<span class="warn-txt">manquante</span>'}</td><td>${esc(r.modele)||'<span class="warn-txt">manquant</span>'}</td><td>${esc(r.coloris)}</td><td class="mono">${esc([r.calibre,r.pont].filter(Boolean).join('□')+(r.branche?' '+r.branche:''))}</td><td class="num">${r.pa?money(r.pa):'—'}</td><td class="num">${r.pv?money(r.pv):'—'}</td></tr>`}).join('')}
+  <div class="table-wrap"><table><thead><tr><th>EAN</th><th>Marque</th><th>Modèle</th><th>Coloris</th><th>Matière</th><th>Taille</th><th class="num">Achat HT</th><th class="num">Vente HT</th></tr></thead><tbody>
+  ${rows.slice(0,8).map(r=>{const bad=!(normEAN(r.ean).length>=8&&r.modele&&r.marque);return`<tr class="${bad?'bad-row':''}"><td class="mono">${esc(r.ean)||'<span class="warn-txt">manquant</span>'}</td><td>${esc(r.marque)||'<span class="warn-txt">manquante</span>'}</td><td>${esc(r.modele)||'<span class="warn-txt">manquant</span>'}</td><td>${esc(r.coloris)}</td><td>${esc(r.matiere)}</td><td class="mono">${esc([r.calibre,r.pont].filter(Boolean).join('□')+(r.branche?' '+r.branche:''))}</td><td class="num">${r.pa?money(r.pa):'—'}</td><td class="num">${r.pv?money(r.pv):'—'}</td></tr>`}).join('')}
   </tbody></table></div>
   <div class="imp-foot"><span class="muted">${ok.length} référence${ok.length>1?'s':''} importable${ok.length>1?'s':''}${exist?` dont ${exist} déjà connue${exist>1?'s':''} (mise${exist>1?'s':''} à jour)`:''}${rows.length-ok.length?` · ${rows.length-ok.length} ligne${rows.length-ok.length>1?'s':''} ignorée${rows.length-ok.length>1?'s':''} (EAN, marque ou modèle manquant)`:''}</span>
   <div class="row-btns"><button class="btn" data-act="imp-cancel">Annuler</button><button class="btn primary" data-act="imp-ok" ${ok.length?'':'disabled'}>Importer ${ok.length} référence${ok.length>1?'s':''}</button></div></div>`;
@@ -1059,7 +1066,7 @@ function runImport(){
   rows.forEach(r=>{const k=normEAN(r.ean);const e={...r,id:'e'+k,importe:now};
     if(idx.has(k)){S.catalogue[idx.get(k)]=e;up++}else{idx.set(k,S.catalogue.length);S.catalogue.push(e);nw++}
     const m=S.montures.find(x=>normEAN(x.ean)===k);
-    if(m){['marque','modele','coloris','calibre','pont','branche'].forEach(f=>{if(!m[f]&&r[f])m[f]=r[f]});if(!m.pv&&r.pv)m.pv=r.pv;applyCoef(m);ms++}
+    if(m){['marque','modele','coloris','matiere','calibre','pont','branche'].forEach(f=>{if(!m[f]&&r[f])m[f]=r[f]});if(!m.pv&&r.pv)m.pv=r.pv;applyCoef(m);ms++}
   });
   save();imp=null;render();
   toast(`Catalogue importé : ${nw} nouvelle${nw>1?'s':''} référence${nw>1?'s':''}${up?`, ${up} mise${up>1?'s':''} à jour`:''}`);
@@ -1793,10 +1800,12 @@ function viewStats(){
   const byC={};vs.forEach(v=>{const o=byC[v.clientId]=byC[v.clientId]||{ca:0,n:0,qte:0};o.ca+=v.ht;o.n++;o.qte+=v.lignes.reduce((t,l)=>t+l.qte,0)});
   const topC=Object.entries(byC).sort((a,b)=>b[1].ca-a[1].ca).slice(0,8).map(([id,o])=>{const c=cli(id);return{bar:o.ca,cells:[`<a class="plain" href="#client-${id}">${esc(c?c.nom:'Client supprimé')}</a>`,o.n,money(o.ca),A.ca?Math.round(o.ca/A.ca*100)+' %':'—']}});
   // marques et modèles
-  const byB={},byM={};
+  const byB={},byM={},byMat={};
   vs.forEach(v=>{const n=v.lignes.reduce((t,l)=>t+lineHT(l),0),f=n?v.ht/n:1;v.lignes.forEach(l=>{const m=mon(l.montureId),b=m?m.marque:(l.designation||'').split(' ')[0]||'Autre';
     const ob=byB[b]=byB[b]||{ca:0,qte:0,marge:0};ob.ca+=lineHT(l)*f;ob.qte+=l.qte;ob.marge+=l.qte*(puNet(l)*f-paOf(l));
+    const mt=(m&&m.matiere)||((m&&catByEAN(m.ean))||{}).matiere||'Non renseignée';const oq=byMat[mt]=byMat[mt]||{ca:0,qte:0,marge:0};oq.ca+=lineHT(l)*f;oq.qte+=l.qte;oq.marge+=l.qte*(puNet(l)*f-paOf(l));
     const om=byM[l.montureId]=byM[l.montureId]||{nom:l.designation,detail:l.detail,qte:0,ca:0};om.qte+=l.qte;om.ca+=lineHT(l)*f})});
+  const topMat=Object.entries(byMat).sort((a,b)=>(a[0]==='Non renseignée')-(b[0]==='Non renseignée')||b[1].ca-a[1].ca).map(([k,o])=>({bar:o.ca,cells:[k==='Non renseignée'?'<span class="muted">Non renseignée</span>':esc(k),nf.format(o.qte),money(o.ca),A.ca?Math.round(o.ca/A.ca*100)+' %':'—',o.ca?Math.round(o.marge/o.ca*100)+' %':'—']}));
   const topB=Object.entries(byB).sort((a,b)=>b[1].ca-a[1].ca).slice(0,8).map(([b,o])=>({bar:o.ca,cells:[esc(b),nf.format(o.qte),money(o.ca),o.ca?Math.round(o.marge/o.ca*100)+' %':'—']}));
   const topM=Object.values(byM).sort((a,b)=>b.qte-a.qte||b.ca-a.ca).slice(0,8).map(o=>({bar:o.qte,cells:[`${esc(o.nom)}<span class="sub">${esc(o.detail||'')}</span>`,nf.format(o.qte),money(o.ca)]}));
   // géographie
@@ -1835,6 +1844,7 @@ function viewStats(){
   <div class="grid-2">
     <section class="panel"><h3>Meilleurs clients</h3>${rankRows(topC,[{t:'Client'},{t:'Ventes',num:1},{t:'CA HT',num:1},{t:'Part',num:1}])}</section>
     <section class="panel"><h3>Marques</h3>${rankRows(topB,[{t:'Marque'},{t:'Qté',num:1},{t:'CA HT',num:1},{t:'Marge',num:1}])}</section>
+    <section class="panel"><h3>Par matière</h3>${rankRows(topMat,[{t:'Matière'},{t:'Qté',num:1},{t:'CA HT',num:1},{t:'Part',num:1},{t:'Marge',num:1}])}${byMat['Non renseignée']?'<p class="hint" style="margin:10px 0 0">Complétez la matière dans la fiche des montures, ou réimportez le catalogue OPTO11 du fournisseur.</p>':''}</section>
     <section class="panel"><h3>Modèles les plus vendus</h3>${rankRows(topM,[{t:'Modèle'},{t:'Qté',num:1},{t:'CA HT',num:1}])}</section>
     <section class="panel"><h3>Par pays</h3>${rankRows(topP,[{t:'Pays'},{t:'CA HT',num:1},{t:'Part',num:1}])}
       ${A.ca?`<dl class="totals" style="margin-top:12px"><dt>Export hors UE</dt><dd>${money(byR.export)}</dd><dt>Union européenne</dt><dd>${money(byR.ue)}</dd><dt>France (TVA 20 %)</dt><dd>${money(byR.fr)}</dd></dl>`:''}</section>
