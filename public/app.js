@@ -1278,14 +1278,20 @@ function factureFor(v){
 });
 save();
 const paidOf=v=>r2(S.reglements.filter(r=>r.venteId===v.id).reduce((t,r)=>t+r.montant,0));
-const resteOf=v=>Math.max(0,r2(v.ttc-paidOf(v)));
+/* Avoirs : ils réduisent ce que le client doit sur la facture ; au-delà, c'est un trop-perçu à rembourser */
+S.avoirs=S.avoirs||[];S.seqAV=S.seqAV||0;
+const avoirsOf=v=>S.avoirs.filter(a=>a.venteId===v.id).sort((a,b)=>a.date.localeCompare(b.date));
+const avoirTTC=v=>r2(avoirsOf(v).reduce((t,a)=>t+a.ttc,0));
+const resteOf=v=>Math.max(0,r2(v.ttc-avoirTTC(v)-paidOf(v)));
+const tropPercu=v=>Math.max(0,r2(paidOf(v)+avoirTTC(v)-v.ttc));
 function statutOf(v){
   const p=paidOf(v),rest=resteOf(v);
+  if(avoirTTC(v)>=v.ttc-0.005&&p<=0.005)return'annulee';
   if(rest<=0.005)return'payee';
   if(isoD(new Date())>v.echeance)return'retard';
   return p>0?'partielle':'attente';
 }
-const STATUT={payee:['Payée','ok'],partielle:['Partielle','warn'],attente:['À régler','neutral'],retard:['En retard','bad']};
+const STATUT={annulee:['Annulée par avoir','neutral'],payee:['Payée','ok'],partielle:['Partielle','warn'],attente:['À régler','neutral'],retard:['En retard','bad']};
 const statutPill=v=>{const[s,c]=STATUT[statutOf(v)];return`<span class="pill ${c}">${s}</span>`};
 const encoursOf=cid=>r2(S.ventes.filter(v=>v.clientId===cid).reduce((t,v)=>t+resteOf(v),0));
 const closedWeek=d=>S.clotures.some(c=>c.semaine===isoD(weekStart(d)));
@@ -1338,9 +1344,13 @@ function journalRows(){
   const[a,b]=periodBounds(),cf=per.client||'',sf=per.statut||'';
   return S.ventes.filter(v=>{const d=new Date(v.date);return d>=a&&d<b&&(!cf||v.clientId===cf)&&(!sf||(sf==='justif'?['partiel','manquant'].includes(justifStatut(v)):statutOf(v)===sf))}).sort((x,y)=>y.date.localeCompare(x.date));
 }
+function journalAvoirs(){
+  if(per.statut)return[];const[a,b]=periodBounds(),cf=per.client||'';
+  return S.avoirs.filter(x=>{const d=new Date(x.date);return d>=a&&d<b&&(!cf||x.clientId===cf)}).sort((x,y)=>y.date.localeCompare(x.date));
+}
 function journalView(){
-  const vs=journalRows();
-  const T=k=>vs.reduce((t,v)=>t+(v[k]||0),0),paid=vs.reduce((t,v)=>t+paidOf(v),0);
+  const vs=journalRows(),avs=journalAvoirs();
+  const T=k=>vs.reduce((t,v)=>t+(v[k]||0),0)-avs.reduce((t,a)=>t+(a[k]||0),0),paid=vs.reduce((t,v)=>t+paidOf(v),0);
   const clients=[...S.clients].sort((x,y)=>x.nom.localeCompare(y.nom,'fr'));
   return`<div class="period">
     <div class="seg" role="group" aria-label="Période">${[['jour','Jour'],['semaine','Semaine'],['mois','Mois'],['annee','Année']].map(([k,l])=>`<button data-act="k-pmode" data-k="${k}" aria-pressed="${per.mode===k}">${l}</button>`).join('')}</div>
@@ -1355,6 +1365,8 @@ function journalView(){
   ${vs.length?vs.map(v=>`<tr class="row-link" data-vid="${v.id}" tabindex="0"><td class="mono">${v.facture}<span class="sub">${v.num}</span></td><td>${dF.format(new Date(v.date))}</td><td>${esc(cli(v.clientId)?.nom||'Client supprimé')}</td>
     <td class="num">${money(v.ht)}</td><td class="num">${v.tva?money(v.tva):'—'}</td><td class="num"><b>${money(v.ttc)}</b></td><td class="num">${money(paidOf(v))}</td><td>${statutPill(v)}</td><td>${expPill(v)||'<span class="sub-cell">—</span>'}${(v.documents||[]).length?`<span class="sub">${v.documents.length} document${v.documents.length>1?'s':''}</span>`:''}</td><td>${justifPill(v)}</td></tr>`).join('')
   :'<tr><td colspan="10"><div class="empty-state" style="padding:32px 12px"><p>Aucune vente sur cette période.</p></div></td></tr>'}
+  ${avs.map(a=>`<tr class="row-link avoir-row" data-vid="${a.venteId}" tabindex="0"><td class="mono">${a.num}<span class="sub">Avoir sur ${a.facture}</span></td><td>${dF.format(new Date(a.date))}</td><td>${esc(cli(a.clientId)?.nom||'Client supprimé')}<span class="sub">${esc(a.motif)}</span></td>
+    <td class="num">−${money(a.ht)}</td><td class="num">${a.tva?'−'+money(a.tva):'—'}</td><td class="num"><b>−${money(a.ttc)}</b></td><td></td><td><span class="pill neutral">Avoir</span></td><td></td><td></td></tr>`).join('')}
   </tbody>${vs.length?`<tfoot><tr><td colspan="3"><b>Total</b></td><td class="num"><b>${money(T('ht'))}</b></td><td class="num"><b>${money(T('tva'))}</b></td><td class="num"><b>${money(T('ttc'))}</b></td><td class="num"><b>${money(paid)}</b></td><td></td><td></td><td></td></tr></tfoot>`:''}</table></div>`;
 }
 function impayesView(){
@@ -1458,9 +1470,9 @@ function venteDetail(id,tab){
   <div class="table-wrap"><table><thead><tr><th>Monture</th><th class="num">Qté</th><th class="num">PU HT</th><th class="num">Montant HT</th></tr></thead><tbody>
   ${v.lignes.map(l=>`<tr><td><b>${esc(l.designation)}</b><span class="sub"><span class="mono">${esc(l.etiquette)}</span>${l.detail?' · '+esc(l.detail):''}</span></td><td class="num">${l.qte}</td><td class="num">${puCell(l)}</td><td class="num">${money(lineHT(l))}</td></tr>`).join('')}
   </tbody></table></div>
-  <dl class="totals" style="max-width:320px;margin-left:auto">${remTotals(v)}${taxLines(v,regOf(v),v.tvaIntra)}</dl>${dioBlock(v,c)}`;
-  else if(vdTab==='reglements')body=`${regs.length?`<div class="docs">${regs.map(r=>`<div class="doc-row static"><span><b>${money(r.montant)}</b><span class="sub">${dF.format(new Date(r.date))} · ${esc(r.mode)}${regInfo(r)?' · '+esc(regInfo(r)):''}</span>${r.justifBanque?`<span class="sub" style="color:var(--ok)">Justifié à la banque le ${dF.format(new Date(r.justifBanque.le))}</span>`:''}</span><span class="row-btns">${/Virement/.test(r.mode)?`<button class="btn small" data-act="bk-open" data-id="${v.id}" data-rid="${r.id}">${r.justifBanque?'Renvoyer à la banque':'Justifier à la banque'}</button>`:''}${closedWeek(r.date)?'<span class="hint">Semaine clôturée</span>':`<button class="link danger-link" data-act="k-regdel" data-id="${r.id}">Supprimer</button>`}</span></div>`).join('')}</div>`:'<p class="muted">Aucun règlement pour cette facture.</p>'}
-  <dl class="totals" style="max-width:320px;margin-left:auto"><dt>Total facturé</dt><dd>${money(v.ttc)}</dd><dt>Réglé</dt><dd>${money(paidOf(v))}</dd><dt class="big">Reste à payer</dt><dd class="big">${money(resteOf(v))}</dd></dl>`;
+  <dl class="totals" style="max-width:320px;margin-left:auto">${remTotals(v)}${taxLines(v,regOf(v),v.tvaIntra)}</dl>${avoirBlock(v)}${dioBlock(v,c)}`;
+  else if(vdTab==='reglements')body=`${regs.length?`<div class="docs">${regs.map(r=>`<div class="doc-row static"><span><b>${money(r.montant)}</b><span class="sub">${dF.format(new Date(r.date))} · ${r.remboursement?'Remboursement · ':''}${esc(r.mode)}${regInfo(r)?' · '+esc(regInfo(r)):''}</span>${r.justifBanque?`<span class="sub" style="color:var(--ok)">Justifié à la banque le ${dF.format(new Date(r.justifBanque.le))}</span>`:''}</span><span class="row-btns">${/Virement/.test(r.mode)&&!r.remboursement?`<button class="btn small" data-act="bk-open" data-id="${v.id}" data-rid="${r.id}">${r.justifBanque?'Renvoyer à la banque':'Justifier à la banque'}</button>`:''}${closedWeek(r.date)?'<span class="hint">Semaine clôturée</span>':`<button class="link danger-link" data-act="k-regdel" data-id="${r.id}">Supprimer</button>`}</span></div>`).join('')}</div>`:'<p class="muted">Aucun règlement pour cette facture.</p>'}
+  <dl class="totals" style="max-width:320px;margin-left:auto"><dt>Total facturé</dt><dd>${money(v.ttc)}</dd>${avoirTTC(v)?`<dt>Avoirs</dt><dd>−${money(avoirTTC(v))}</dd>`:''}<dt>Réglé</dt><dd>${money(paidOf(v))}</dd><dt class="big">Reste à payer</dt><dd class="big">${money(resteOf(v))}</dd></dl>`;
   else if(vdTab==='documents')body=attBlock(v)+`${assetsNS?`<label class="drop small" id="vd-drop" for="vd-file"><b>Ajouter des documents</b><span>Bordereau DHL, facture, photo… · PDF ou image, 20 Mo maximum</span>
     <input id="vd-file" type="file" multiple accept=".pdf,image/*,.txt,.csv" hidden data-vid="${v.id}"></label><p class="scan-msg" id="vd-msg" role="status"></p>`
     :`<p class="notice" style="margin:0">L'ajout de documents n'est possible que pour le propriétaire de Prismea, dans claude.ai.</p>`}
@@ -1641,6 +1653,111 @@ function viewParametres(){
   </div>`;
 }
 
+/* ---------- Avoirs et retours ---------- */
+const AV_MOTIFS=['Retour client','Monture défectueuse','Erreur de facturation','Geste commercial','Autre'];
+/* prix unitaire réellement facturé (remise de ligne + part de la remise client) */
+const prixFacture=(v,l)=>{const n=v.lignes.reduce((t,x)=>t+lineHT(x),0),f=n?v.ht/n:1;return r2(puNet(l)*f)};
+const dejaAvoir=(v,mid)=>avoirsOf(v).reduce((t,a)=>t+a.lignes.filter(x=>x.montureId===mid).reduce((u,x)=>u+x.qte,0),0);
+function avoirBlock(v){
+  const avs=avoirsOf(v),tp=tropPercu(v);
+  return`<div class="av-box"><div class="row-between"><b>Avoirs</b><button class="btn small" data-act="av-new" data-id="${v.id}" ${statutOf(v)==='annulee'?'disabled':''}>Faire un avoir</button></div>
+  ${avs.length?`<div class="docs">${avs.map(a=>`<div class="doc-row static"><span><b class="mono">${a.num}</b> · ${money(a.ttc)}<span class="sub">${dF.format(new Date(a.date))} · ${esc(a.motif)}${a.lignes.length?` · ${a.lignes.reduce((t,l)=>t+l.qte,0)} monture${a.lignes.reduce((t,l)=>t+l.qte,0)>1?'s':''}${a.lignes.some(l=>l.stock)?' remise'+(a.lignes.filter(l=>l.stock).reduce((t,l)=>t+l.qte,0)>1?'s':'')+' en stock':''}`:''}</span></span><button class="btn small" data-act="av-pdf" data-id="${a.id}">PDF</button></div>`).join('')}</div>`
+  :'<p class="hint" style="margin:6px 0 0">Retour de montures, monture défectueuse ou geste commercial : la facture n\'est jamais modifiée, on établit un avoir.</p>'}
+  ${tp>0.005?`<div class="regime warn" style="margin-top:10px">Trop-perçu de ${money(tp)} à rembourser au client<span><button class="link" data-act="av-remb" data-id="${v.id}">Enregistrer le remboursement</button></span></div>`:''}</div>`;
+}
+function avoirForm(vid){
+  const v=S.ventes.find(x=>x.id===vid);if(!v)return;const c=cli(v.clientId),reg=regOf(v);
+  const rows=v.lignes.map((l,i)=>({i,l,max:Math.max(0,l.qte-dejaAvoir(v,l.montureId)),pu:prixFacture(v,l)}));
+  const st={q:rows.map(()=>0),stock:rows.map(()=>true),libre:0};
+  openModal('Avoir sur la facture '+v.facture,`${c?c.nom:''} · facture du ${dF.format(new Date(v.date))} · ${money(v.ttc)}`,`
+  <div class="table-wrap"><table><thead><tr><th>Monture</th><th class="num">Facturée</th><th class="num">Prix facturé HT</th><th style="width:140px">À reprendre</th><th>Remise en stock</th></tr></thead><tbody>
+  ${rows.map(r=>`<tr><td><b>${esc(r.l.designation)}</b><span class="sub"><span class="mono">${esc(r.l.etiquette)}</span>${r.l.detail?' · '+esc(r.l.detail):''}</span></td>
+    <td class="num">${r.l.qte}${r.max<r.l.qte?`<span class="sub">${r.l.qte-r.max} déjà en avoir</span>`:''}</td><td class="num">${money(r.pu)}</td>
+    <td>${r.max?`<div class="qty"><button type="button" data-avq="${r.i}" data-d="-1" aria-label="Diminuer">−</button><input type="number" min="0" max="${r.max}" id="avq-${r.i}" value="0" aria-label="Quantité reprise"><button type="button" data-avq="${r.i}" data-d="1" aria-label="Augmenter">+</button></div>`:'<span class="sub-cell">—</span>'}</td>
+    <td>${r.max?`<label class="check"><input type="checkbox" id="avs-${r.i}" checked> Oui</label>`:''}</td></tr>`).join('')}
+  </tbody></table></div>
+  <fieldset style="margin-top:14px">
+    <label>Motif<select id="av-motif">${AV_MOTIFS.map(m=>`<option>${m}</option>`).join('')}</select></label>
+    <label>Montant supplémentaire HT<span class="suffix"><input id="av-libre" type="number" min="0" step="0.01" placeholder="0"><span>€</span></span><span class="hint">Geste commercial ou correction de prix, sans reprise de monture</span></label>
+    <label class="full">Commentaire (figure sur l'avoir)<input id="av-note" maxlength="200" placeholder="Ex. charnière cassée à la réception"></label>
+  </fieldset>
+  <p class="hint">Décochez « Remise en stock » pour une monture défectueuse qui ne sera pas revendue.</p>
+  <dl class="totals" id="av-tot" style="max-width:320px;margin-left:auto"></dl>`,
+  `<button class="btn" data-act="close">Annuler</button><button class="btn primary" id="av-ok" disabled>Créer l'avoir</button>`,()=>{
+    $('.modal-card').classList.add('wide');
+    const calc=()=>{const lines=rows.map((r,k)=>st.q[k]?{r,q:st.q[k]}:null).filter(Boolean);const ht=r2(lines.reduce((t,x)=>t+r2(x.q*x.r.pu),0)+st.libre);const tva=reg==='fr'?r2(ht*TVA_FR/100):0;return{lines,ht,tva,ttc:r2(ht+tva)}};
+    const draw=()=>{const t=calc();$('#av-tot').innerHTML=`<dt>Total HT de l'avoir</dt><dd>${money(t.ht)}</dd>${reg==='fr'?`<dt>TVA ${TVA_FR} %</dt><dd>${money(t.tva)}</dd>`:''}<dt class="big">Montant de l'avoir</dt><dd class="big">${money(t.ttc)}</dd>${t.ttc>resteOf(v)+0.005?`<dd class="legal">${resteOf(v)>0.005?`${money(resteOf(v))} viennent en déduction de ce que le client doit encore ; le`:'Le'} reste (${money(t.ttc-resteOf(v))}) sera un trop-perçu à lui rembourser.</dd>`:''}`;
+      $('#av-ok').disabled=!(t.ttc>0)};
+    rows.forEach(r=>{const i=$('#avq-'+r.i);if(i)i.onchange=()=>{st.q[r.i]=Math.min(r.max,Math.max(0,Math.round(+i.value||0)));i.value=st.q[r.i];draw()}});
+    $('#m-body').querySelectorAll('[data-avq]').forEach(b=>b.onclick=()=>{const k=+b.dataset.avq,r=rows[k];st.q[k]=Math.min(r.max,Math.max(0,st.q[k]+(+b.dataset.d)));$('#avq-'+k).value=st.q[k];draw()});
+    $('#av-libre').oninput=e=>{st.libre=Math.max(0,r2(+String(e.target.value).replace(',','.')||0));draw()};
+    $('#av-motif').onchange=e=>{if(/défectueuse/.test(e.target.value))rows.forEach(r=>{const x=$('#avs-'+r.i);if(x)x.checked=false})};
+    draw();
+    $('#av-ok').onclick=async e=>{
+      const t=calc();if(!(t.ttc>0))return;e.target.disabled=true;
+      let n;try{n=await alloc('AV',S.seqAV||0)}catch(x){e.target.disabled=false;toast('Connexion perdue : l\'avoir n\'a pas été créé.');return}
+      S.seqAV=Math.max(S.seqAV||0,n);const d=new Date();
+      const a={id:'a'+Date.now().toString(36),num:'AV'+d.getFullYear()+'-'+pad4(n),date:d.toISOString(),venteId:v.id,facture:v.facture,clientId:v.clientId,regime:reg,tvaIntra:v.tvaIntra||'',
+        motif:$('#av-motif').value,note:$('#av-note').value.trim(),
+        lignes:t.lines.map(x=>({montureId:x.r.l.montureId,etiquette:x.r.l.etiquette,designation:x.r.l.designation,detail:x.r.l.detail||'',qte:x.q,pu:x.r.pu,pa:paOf(x.r.l),stock:!!($('#avs-'+x.r.i)||{}).checked})),
+        libre:st.libre,ht:t.ht,tva:t.tva,ttc:t.ttc,par:(window.__PRISMEA__.user||{}).nom||''};
+      a.lignes.forEach(l=>{if(l.stock){const m=mon(l.montureId);if(m)m.qte+=l.qte}});
+      S.avoirs.push(a);save();render();venteDetail(v.id,'facture');toast(`Avoir ${a.num} créé · ${money(a.ttc)}`);
+    };
+  });
+}
+function avoirPDF(a){
+  const v=S.ventes.find(x=>x.id===a.venteId)||{};const {jsPDF}=window.jspdf;const pdf=new jsPDF({unit:'mm',format:'a4'});
+  const txt=s=>String(s??'').replace(/[  ]/g,' ').replace(/□/g,'/').replace(/[−–]/g,'-');const eur=n=>txt(money(n));
+  const s=S.societe,c=cli(a.clientId)||{},p=paysByCode(c.pays),reg=a.regime;const W=210,L=16,R=W-16;let y=18;
+  pdf.setFont('helvetica','bold');pdf.setFontSize(15);pdf.text(txt(s.nom||'Votre société'),L,y);
+  pdf.setFont('helvetica','normal');pdf.setFontSize(8.5);pdf.setTextColor(80);
+  const sl=[[s.forme,s.capital?'au capital de '+s.capital:''].filter(Boolean).join(' '),s.adresse,[s.cp,s.ville].filter(Boolean).join(' '),[s.tel,s.email].filter(Boolean).join(' · '),
+    s.siren?'SIREN '+s.siren+(s.rcs?' · '+s.rcs:''):'',s.tvaIntra?'N° TVA '+s.tvaIntra:''].filter(Boolean);
+  sl.forEach((t,i)=>pdf.text(txt(t),L,y+5+i*4));
+  pdf.setTextColor(0);pdf.setFont('helvetica','bold');pdf.setFontSize(20);pdf.text('AVOIR',R,y,{align:'right'});
+  pdf.setFontSize(10);pdf.text(txt('N° '+a.num),R,y+7,{align:'right'});
+  pdf.setFont('helvetica','normal');pdf.setFontSize(9);
+  pdf.text(txt('Date : '+dF.format(new Date(a.date))),R,y+12,{align:'right'});
+  pdf.text(txt('Sur la facture '+a.facture+(v.date?' du '+dF.format(new Date(v.date)):'')),R,y+16.5,{align:'right'});
+  y=Math.max(y+5+sl.length*4,y+24)+8;
+  pdf.setFillColor(246,248,250);pdf.roundedRect(110,y,R-110,34,2,2,'F');
+  pdf.setFontSize(8);pdf.setTextColor(100);pdf.text('CLIENT',114,y+6);pdf.setTextColor(0);
+  pdf.setFont('helvetica','bold');pdf.setFontSize(10.5);pdf.text(txt(c.nom||''),114,y+12);pdf.setFont('helvetica','normal');pdf.setFontSize(8.8);
+  [...(c.adresse||'').split('\n'),[c.ville,p?p[1]:''].filter(Boolean).join(', '),c.tvaIntra?'N° TVA '+c.tvaIntra:'',c.nif?'NIF '+c.nif:''].filter(Boolean).slice(0,4).forEach((t,i)=>pdf.text(txt(t),114,y+17+i*4.2));
+  pdf.setFontSize(9);pdf.text(txt('Motif : '+a.motif),L,y+8);if(a.note)pdf.text(pdf.splitTextToSize(txt(a.note),85),L,y+13);
+  y+=44;
+  const body=a.lignes.map(l=>[txt(l.etiquette),txt(l.designation+(l.detail?' - '+l.detail:'')),String(l.qte),eur(l.pu),eur(l.qte*l.pu)]);
+  if(a.libre)body.push(['',txt(a.motif==='Geste commercial'?'Geste commercial':'Montant complémentaire'),'1',eur(a.libre),eur(a.libre)]);
+  pdf.autoTable({startY:y,head:[['Réf.','Désignation','Qté','PU HT','Montant HT']],body,margin:{left:L,right:16},
+    styles:{font:'helvetica',fontSize:8.8,cellPadding:2.2},headStyles:{fillColor:[10,102,112],textColor:255},
+    columnStyles:{0:{cellWidth:20},2:{halign:'right',cellWidth:12},3:{halign:'right',cellWidth:26},4:{halign:'right',cellWidth:30}}});
+  y=pdf.lastAutoTable.finalY+6;
+  const tot=[['Total HT',eur(a.ht)]];if(reg==='fr')tot.push(['TVA 20 %',eur(a.tva)]);else tot.push(['TVA','Non applicable']);tot.push(["Montant de l'avoir",eur(a.ttc)]);
+  tot.forEach(([k,val],i)=>{const last=i===tot.length-1;pdf.setFont('helvetica',last?'bold':'normal');pdf.setFontSize(last?11:9.2);if(last){pdf.setDrawColor(10,102,112);pdf.line(120,y-4,R,y-4)}pdf.text(txt(k),122,y);pdf.text(val,R,y,{align:'right'});y+=last?7:5});
+  y+=4;pdf.setFont('helvetica','normal');pdf.setFontSize(8.5);
+  const legal=reg==='fr'?'':reg==='ue'?`Exonération de TVA, article 262 ter I du CGI (livraison intracommunautaire). Autoliquidation par le client${a.tvaIntra?', n° TVA '+a.tvaIntra:''}.`:'Exonération de TVA, article 262 I du CGI (exportation).';
+  [legal,`Cet avoir vient en déduction de la facture ${a.facture}. Le montant non utilisé sur cette facture sera remboursé ou déduit d'une prochaine facture.`].filter(Boolean)
+    .forEach(t=>{const w=pdf.splitTextToSize(txt(t),R-L);pdf.text(w,L,y);y+=w.length*4+2});
+  return pdf.output('arraybuffer');
+}
+function downloadAvoir(id){
+  const a=S.avoirs.find(x=>x.id===id);if(!a)return;
+  if(!window.jspdf){toast('Le module PDF n\'a pas pu se charger. Vérifiez la connexion internet.');return}
+  const c=cli(a.clientId);offerFile(`Avoir ${a.num} - ${(c?c.nom:'client').replace(/[\\/:*?"<>|]/g,'')}.pdf`,avoirPDF(a));
+}
+function rembForm(vid){
+  const v=S.ventes.find(x=>x.id===vid);if(!v)return;const tp=tropPercu(v);
+  openModal('Rembourser le client',`Facture ${v.facture} · trop-perçu ${money(tp)}`,`<fieldset>
+    <label>Date<input id="rb-date" type="date" value="${isoD(new Date())}"></label>
+    <label>Montant remboursé<span class="suffix"><input id="rb-mt" type="number" min="0" step="0.01" value="${tp.toFixed(2)}"><span>€</span></span></label>
+    <label>Mode<select id="rb-mode">${PAY_MODES.map(m=>`<option>${m}</option>`).join('')}</select></label>
+    <label>Référence<input id="rb-ref" placeholder="Ex. référence du virement"></label></fieldset>`,
+    `<button class="btn" data-act="close">Annuler</button><button class="btn primary" id="rb-ok">Enregistrer le remboursement</button>`,()=>{
+    $('#rb-ok').onclick=()=>{const mt=Math.min(tp,r2(+$('#rb-mt').value||0));if(!(mt>0)){toast('Indiquez le montant remboursé.');return}
+      S.reglements.push({id:'g'+Date.now().toString(36),venteId:v.id,clientId:v.clientId,date:new Date($('#rb-date').value+'T12:00:00').toISOString(),montant:-mt,mode:$('#rb-mode').value,remboursement:true,ref:$('#rb-ref').value.trim(),banque:''});
+      save();venteDetail(v.id,'reglements');toast(`Remboursement de ${money(mt)} enregistré`)}});
+}
 function payForm(id){
   const v=S.ventes.find(x=>x.id===id);if(!v)return;const c=cli(v.clientId);
   openModal('Encaisser la facture '+v.facture,`${c?c.nom:''} · reste à payer ${money(resteOf(v))}`,`
@@ -1732,6 +1849,7 @@ function downloadInvoice(id){
 function journalCSV(vs,name){
   const rows=[['Facture','Vente','Date','Client','Pays','Régime TVA','Total HT','TVA','Total TTC','Réglé','Reste','Échéance','Statut']];
   vs.forEach(v=>{const c=cli(v.clientId)||{};rows.push([v.facture,v.num,dF.format(new Date(v.date)),c.nom||'',(paysByCode(c.pays)||[])[1]||'',REGIME[regOf(v)],csvNum(v.ht),csvNum(v.tva),csvNum(v.ttc),csvNum(paidOf(v)),csvNum(resteOf(v)),dF.format(new Date(v.echeance)),STATUT[statutOf(v)][0]])});
+  journalAvoirs().forEach(a=>{const c=cli(a.clientId)||{};rows.push([a.num,'Avoir sur '+a.facture,dF.format(new Date(a.date)),c.nom||'',(paysByCode(c.pays)||[])[1]||'',REGIME[a.regime]||'',csvNum(-a.ht),csvNum(-a.tva),csvNum(-a.ttc),'','','','Avoir · '+a.motif])});
   offerFile(name,csvOf(rows));
 }
 function weekCSV(){
@@ -1740,6 +1858,7 @@ function weekCSV(){
   const rs=S.reglements.filter(r=>{const d=new Date(r.date);return d>=a&&d<b});
   const rows=[['Type','Date','Facture','Client','Mode','Banque','Référence','HT','TVA','TTC / Montant']];
   vs.forEach(v=>rows.push(['Vente',dF.format(new Date(v.date)),v.facture,cli(v.clientId)?.nom||'','','','',csvNum(v.ht),csvNum(v.tva),csvNum(v.ttc)]));
+  S.avoirs.filter(x=>{const d=new Date(x.date);return d>=a&&d<b}).forEach(x=>rows.push(['Avoir',dF.format(new Date(x.date)),x.num+' (sur '+x.facture+')',cli(x.clientId)?.nom||'','','','',csvNum(-x.ht),csvNum(-x.tva),csvNum(-x.ttc)]));
   rs.forEach(r=>{const v=S.ventes.find(x=>x.id===r.venteId);rows.push(['Règlement',dF.format(new Date(r.date)),v?v.facture:'',cli(r.clientId)?.nom||'',r.mode,r.banque||'',r.ref||'','','',csvNum(r.montant)])});
   offerFile(`Caisse semaine du ${isoD(a)}.csv`,csvOf(rows));
 }
@@ -1776,6 +1895,9 @@ document.addEventListener('click',e=>{
       v.expedition=e;save();render();venteDetail(id,'expedition');toast('Expédition enregistrée');
       if(e.suivi&&(e.transporteur||'DHL')==='DHL'&&window.__PRISMEA__.dhl&&(!e.dhl||old.suivi!==e.suivi))dhlRefresh(id);break}
     case'vd-dhl':dhlRefresh(id);break;
+    case'av-new':avoirForm(id);break;
+    case'av-pdf':downloadAvoir(id);break;
+    case'av-remb':rembForm(id);break;
     case'dio-send':dioSend(id,!!b.dataset.force,b);break;
     case'dio-dl':dioDownload(id);break;
     case'vd-docdel':{
@@ -1856,10 +1978,13 @@ function statLabel(){
 const inR=(d,[a,b])=>{const x=new Date(d);return x>=a&&x<b};
 const paOf=l=>l.pa!=null?l.pa:((mon(l.montureId)||{}).pa||0);
 /* Chiffres d'une liste de ventes : CA HT (remise déduite), marge brute, montures vendues */
+/* Les avoirs viennent en déduction du chiffre d'affaires, des quantités et de la marge, à leur date */
+const avPseudo=range=>S.avoirs.filter(a=>inR(a.date,range)).map(a=>({avoir:true,id:a.id,date:a.date,clientId:a.clientId,regime:a.regime,ht:-a.ht,
+  lignes:[...a.lignes.map(l=>({montureId:l.montureId,etiquette:l.etiquette,designation:l.designation,detail:l.detail,qte:-l.qte,pu:l.pu,pa:l.stock?l.pa:0})),...(a.libre?[{libre:true,montureId:null,designation:'',qte:-1,pu:a.libre,pa:0}]:[])]}));
 function aggr(vs){
   let ca=0,marge=0,qte=0;
   vs.forEach(v=>{const n=v.lignes.reduce((t,l)=>t+lineHT(l),0),f=n?v.ht/n:1;ca+=v.ht;v.lignes.forEach(l=>{qte+=l.qte;marge+=l.qte*(puNet(l)*f-paOf(l))})});
-  return{ca:r2(ca),marge:r2(marge),qte,n:vs.length};
+  return{ca:r2(ca),marge:r2(marge),qte:qte+vs.filter(v=>v.avoir).reduce((t,v)=>t+v.lignes.filter(l=>l.libre).length,0),n:vs.filter(v=>!v.avoir).length};
 }
 function delta(cur,prev){
   if(!prev)return'<span class="d muted-d">Pas de comparaison</span>';
@@ -1871,7 +1996,7 @@ const shortN=v=>v>=1e6?nf2.format(r2(v/1e6)).replace(/,00$/,'')+' M':v>=1e4?Ma
 function monthSeries(){
   const[,b]=statBounds(),months=[];
   for(let i=12;i>=1;i--)months.push(new Date(b.getFullYear(),b.getMonth()-i,1));
-  return months.map(m=>{const e=new Date(m.getFullYear(),m.getMonth()+1,1);const a=aggr(S.ventes.filter(v=>inR(v.date,[m,e])));return{m,v:st.metric==='ca'?a.ca:st.metric==='marge'?a.marge:a.qte}});
+  return months.map(m=>{const e=new Date(m.getFullYear(),m.getMonth()+1,1);const a=aggr([...S.ventes.filter(v=>inR(v.date,[m,e])),...avPseudo([m,e])]);return{m,v:st.metric==='ca'?a.ca:st.metric==='marge'?a.marge:a.qte}});
 }
 function barChart(series,range){
   const W=760,H=260,L=56,R=12,T=16,B=30,iw=W-L-R,ih=H-T-B;
@@ -1898,18 +2023,18 @@ function rankRows(rows,cols){
 }
 function viewStats(){
   const range=statBounds(),prev=statPrev();
-  const vs=S.ventes.filter(v=>inR(v.date,range)),vp=S.ventes.filter(v=>inR(v.date,prev));
+  const vs=[...S.ventes.filter(v=>inR(v.date,range)),...avPseudo(range)],vp=[...S.ventes.filter(v=>inR(v.date,prev)),...avPseudo(prev)];
   const A=aggr(vs),P=aggr(vp);
   const enc=S.reglements.filter(r=>inR(r.date,range)).reduce((t,r)=>t+r.montant,0);
   const reste=S.ventes.reduce((t,v)=>t+resteOf(v),0);
   const stockV=S.montures.reduce((t,m)=>t+Math.max(0,m.qte)*(m.pa||0),0);
-  const actifs=new Set(vs.map(v=>v.clientId)).size;
+  const actifs=new Set(vs.filter(v=>!v.avoir).map(v=>v.clientId)).size;
   // clients
-  const byC={};vs.forEach(v=>{const o=byC[v.clientId]=byC[v.clientId]||{ca:0,n:0,qte:0};o.ca+=v.ht;o.n++;o.qte+=v.lignes.reduce((t,l)=>t+l.qte,0)});
+  const byC={};vs.forEach(v=>{const o=byC[v.clientId]=byC[v.clientId]||{ca:0,n:0,qte:0};o.ca+=v.ht;if(!v.avoir)o.n++;o.qte+=v.lignes.reduce((t,l)=>t+l.qte,0)});
   const topC=Object.entries(byC).sort((a,b)=>b[1].ca-a[1].ca).slice(0,8).map(([id,o])=>{const c=cli(id);return{bar:o.ca,cells:[`<a class="plain" href="#client-${id}">${esc(c?c.nom:'Client supprimé')}</a>`,o.n,money(o.ca),A.ca?Math.round(o.ca/A.ca*100)+' %':'—']}});
   // marques et modèles
   const byB={},byM={},byMat={};
-  vs.forEach(v=>{const n=v.lignes.reduce((t,l)=>t+lineHT(l),0),f=n?v.ht/n:1;v.lignes.forEach(l=>{const m=mon(l.montureId),b=m?m.marque:(l.designation||'').split(' ')[0]||'Autre';
+  vs.forEach(v=>{const n=v.lignes.reduce((t,l)=>t+lineHT(l),0),f=n?v.ht/n:1;v.lignes.forEach(l=>{if(l.libre)return;const m=mon(l.montureId),b=m?m.marque:(l.designation||'').split(' ')[0]||'Autre';
     const ob=byB[b]=byB[b]||{ca:0,qte:0,marge:0};ob.ca+=lineHT(l)*f;ob.qte+=l.qte;ob.marge+=l.qte*(puNet(l)*f-paOf(l));
     const mt=(m&&m.matiere)||((m&&catByEAN(m.ean))||{}).matiere||'Non renseignée';const oq=byMat[mt]=byMat[mt]||{ca:0,qte:0,marge:0};oq.ca+=lineHT(l)*f;oq.qte+=l.qte;oq.marge+=l.qte*(puNet(l)*f-paOf(l));
     const om=byM[l.montureId]=byM[l.montureId]||{nom:l.designation,detail:l.detail,qte:0,ca:0};om.qte+=l.qte;om.ca+=lineHT(l)*f})});

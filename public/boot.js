@@ -3,7 +3,7 @@
 'use strict';
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const KINDS=['clients','montures','ventes','devis','receptions','reglements','clotures','catalogue','marques','fournisseurs','facturesF','photos'];
+const KINDS=['clients','montures','ventes','devis','receptions','reglements','clotures','catalogue','marques','fournisseurs','facturesF','photos','avoirs'];
 const normEAN=v=>String(v??'').replace(/\D/g,'').replace(/^0+/,'');
 
 async function api(path,opt){
@@ -145,7 +145,7 @@ async function start(user){
   const u=$('#user');u.hidden=false;
   u.querySelector('b').textContent=user.nom.split(' ')[0];
   $('#logout').onclick=async()=>{try{await flush()}catch(e){}await fetch('/api/logout',{method:'POST',credentials:'same-origin'});location.hash='';location.reload()};
-  const s=document.createElement('script');s.src='/app.js?v=16';
+  const s=document.createElement('script');s.src='/app.js?v=17';
   s.onload=()=>{flush().catch(()=>{});Sync.pollT=setTimeout(poll,12000)};
   document.body.appendChild(s);
 }

@@ -410,3 +410,9 @@ td s.muted{font-size:12px}
 .etq-count{margin:0;font-size:14px}
 .lbl-s{font-size:13px;font-weight:600}
 @media (max-width:760px){.etq-grid{grid-template-columns:1fr}}
+
+/* Avoirs */
+.av-box{margin-top:16px;padding:12px 14px;border:1px solid var(--line);border-radius:10px}
+.av-box .docs{margin-top:8px}
+tr.avoir-row td{color:var(--muted)}
+tr.avoir-row td b{color:var(--ink)}
