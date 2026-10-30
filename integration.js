@@ -82,9 +82,43 @@ async function catalogue(req) {
   const cle = await check(req);
   if (!cle) return { status: 401, body: { erreur: "Clé d'intégration Prismea invalide ou désactivée." } };
   const { rows } = await pool.query("select data from entities where kind='montures' and not deleted");
+  const { rows: ph } = await pool.query("select data from entities where kind='photos' and not deleted");
+  const photoEAN = new Map(ph.map(r => [normEAN(r.data.ean), r.data.file]));
   const items = rows.map(r => r.data).filter(m => (m.qte || 0) > 0).map(m => ({ ean: m.ean || '', etiquette: m.etiquette, marque: m.marque, modele: m.modele, coloris: m.coloris || '',
-    taille: m.calibre ? `${m.calibre}□${m.pont || ''}${m.branche ? ' ' + m.branche : ''}` : '', matiere: m.matiere || '', prix: m.pv || 0, disponible: m.qte }));
+    taille: m.calibre ? `${m.calibre}□${m.pont || ''}${m.branche ? ' ' + m.branche : ''}` : '', matiere: m.matiere || '', prix: m.pv || 0, disponible: m.qte,
+    photo: m.photo === null ? '' : (m.photo || photoEAN.get(normEAN(m.ean)) || '') }));
   return { status: 200, body: { devise: 'EUR', maj: new Date().toISOString(), montures: items } };
 }
 
-module.exports = { publicList, create, setActif, receive, catalogue };
+/* Photo d'une monture du catalogue (uniquement les fichiers utilisés comme photos de montures) */
+async function photo(req) {
+  const cle = await check(req);
+  if (!cle) return { status: 401, body: { erreur: "Clé d'intégration Prismea invalide ou désactivée." } };
+  const id = String(req.params.id || '');
+  if (!/^[a-f0-9]{32}$/.test(id)) return { status: 404, body: { erreur: 'Photo introuvable.' } };
+  const { rows: ok } = await pool.query("select 1 from entities where not deleted and ((kind='photos' and data->>'file'=$1) or (kind='montures' and data->>'photo'=$1)) limit 1", [id]);
+  if (!ok.length) return { status: 404, body: { erreur: 'Photo introuvable.' } };
+  const { rows } = await pool.query('select type,data from files where id=$1', [id]);
+  if (!rows[0]) return { status: 404, body: { erreur: 'Photo introuvable.' } };
+  return { status: 200, file: rows[0] };
+}
+
+/* Statut des commandes envoyées (pour le suivi dans DIOPTRA) */
+async function statuts(req) {
+  const cle = await check(req);
+  if (!cle) return { status: 401, body: { erreur: "Clé d'intégration Prismea invalide ou désactivée." } };
+  const b = req.body || {}, source = txt(b.source || cle.nom, 60);
+  const nums = (Array.isArray(b.numeros) ? b.numeros : []).slice(0, 200).map(n => txt(n, 60)).filter(Boolean);
+  if (!nums.length) return { status: 200, body: { commandes: [] } };
+  const ids = nums.map(n => 'cc-' + norm(source) + '-' + n.replace(/[^\w.-]+/g, '_'));
+  const { rows } = await pool.query("select id,data,deleted from entities where kind='commandesC' and id = any($1)", [ids]);
+  const byId = new Map(rows.map(r => [r.id, r]));
+  const vIds = rows.map(r => r.data.venteId).filter(Boolean), dIds = rows.map(r => r.data.devisId).filter(Boolean);
+  const { rows: docs } = await pool.query("select kind,id,data from entities where (kind='ventes' and id = any($1)) or (kind='devis' and id = any($2))", [vIds, dIds]);
+  const doc = new Map(docs.map(r => [r.kind + ':' + r.id, r.data]));
+  return { status: 200, body: { commandes: nums.map((n, i) => { const r = byId.get(ids[i]); if (!r || r.deleted) return { numero: n, statut: 'inconnue' };
+    const v = r.data.venteId && doc.get('ventes:' + r.data.venteId), d = r.data.devisId && doc.get('devis:' + r.data.devisId);
+    return { numero: n, statut: r.data.statut, traiteeLe: r.data.traiteeLe || null, facture: v ? v.facture : null, vente: v ? v.num : null, devis: d ? d.num : null }; }) } };
+}
+
+module.exports = { publicList, create, setActif, receive, catalogue, photo, statuts };

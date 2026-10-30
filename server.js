@@ -341,6 +341,12 @@ app.delete('/api/files/:id', needAuth, wrap(async (req, res) => {
 /* ---------- Commandes entrantes (DIOPTRA → Prismea), avec clé d'intégration psm_ ---------- */
 app.post('/api/commandes', json, wrap(async (req, res) => { const r = await integ.receive(req); res.status(r.status).json(r.body); }));
 app.get('/api/catalogue', wrap(async (req, res) => { const r = await integ.catalogue(req); res.status(r.status).json(r.body); }));
+app.get('/api/catalogue/photo/:id', wrap(async (req, res) => {
+  const r = await integ.photo(req);
+  if (r.file) { res.setHeader('Content-Type', r.file.type); res.setHeader('Cache-Control', 'private, max-age=31536000, immutable'); return res.send(r.file.data); }
+  res.status(r.status).json(r.body);
+}));
+app.post('/api/commandes/statuts', json, wrap(async (req, res) => { const r = await integ.statuts(req); res.status(r.status).json(r.body); }));
 app.get('/api/integration/cles', needAuth, wrap(async (req, res) => res.json({ cles: await integ.publicList(), url: req.protocol + '://' + req.get('host') + '/api/commandes' })));
 app.post('/api/integration/cles', json, needAuth, wrap(async (req, res) => res.json(await integ.create((req.body || {}).nom, req.session.user.id))));
 app.post('/api/integration/cles/:id/actif', json, needAuth, wrap(async (req, res) => {
