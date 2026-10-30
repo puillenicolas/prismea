@@ -131,6 +131,8 @@ async function send(venteId, { force, user }) {
   await pool.query(
     "update entities set data = jsonb_set(data, '{dioptra}', $3::jsonb, true), updated_at=clock_timestamp(), updated_by=$4 where kind=$1 and id=$2",
     ['ventes', venteId, JSON.stringify(dioptra), user.id]);
+  await pool.query("insert into activite(user_id,user_nom,kind,ent_id,action,label,details) values($1,$2,'ventes',$3,'envoi',$4,$5)",
+    [user.id, user.nom, venteId, 'Envoi DIOPTRA ' + (v.facture || v.num) + ' → ' + payload.magasin, JSON.stringify([{ champ: 'résultat', avant: '', apres: ok ? 'accepté (' + http + ')' : 'refusé (' + (http || 'injoignable') + ')' }])]).catch(() => {});
   const nv = await entity('ventes', venteId);
   return { status: ok ? 200 : (http === 409 ? 409 : 502), body: { ok, dioptra, vente: nv, http, message } };
 }

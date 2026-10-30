@@ -9,6 +9,7 @@ const bcrypt = require('bcryptjs');
 const { pool, migrate } = require('./db');
 const dhl = require('./dhl');
 const dioptra = require('./dioptra');
+const integ = require('./integration');
 const { seed } = require('./seed');
 
 const PORT = process.env.PORT || 3000;
@@ -24,7 +25,7 @@ const USERS = [
 ];
 
 /* Collections synchronisées (tableaux du state) ; le reste du state est en « meta » */
-const KINDS = ['clients', 'montures', 'ventes', 'devis', 'receptions', 'reglements', 'clotures', 'catalogue', 'marques', 'fournisseurs', 'facturesF', 'photos', 'avoirs', 'commandesF'];
+const KINDS = ['clients', 'montures', 'ventes', 'devis', 'receptions', 'reglements', 'clotures', 'catalogue', 'marques', 'fournisseurs', 'facturesF', 'photos', 'avoirs', 'commandesF', 'inventaires', 'commandesC'];
 const SEQ_NAMES = { V: 'seqV', FA: 'seqFA', M: 'seqM', D: 'seqD', R: 'seqR', C: 'seq', F: 'seqF', AV: 'seqAV', CF: 'seqCF' };
 
 const app = express();
@@ -127,13 +128,79 @@ function mergeMeta(id, incoming, current) {
   if (id.startsWith('seq') && typeof incoming === 'number') return Math.max(incoming, typeof current === 'number' ? current : 0);
   return incoming;
 }
+/* ---------- Historique des modifications ---------- */
+const KLABEL = { clients: 'Client', montures: 'Monture', ventes: 'Vente', devis: 'Devis', receptions: 'Entrée de stock', reglements: 'Règlement', clotures: 'Clôture de semaine',
+  catalogue: 'Catalogue', marques: 'Marque', fournisseurs: 'Fournisseur', facturesF: 'Facture fournisseur', photos: 'Photo', avoirs: 'Avoir', commandesF: 'Commande fournisseur',
+  inventaires: 'Inventaire', commandesC: 'Commande reçue', meta: 'Paramètres' };
+const labelOf = (kind, id, d) => {
+  d = d || {};
+  switch (kind) {
+    case 'clients': case 'marques': case 'fournisseurs': return d.nom || id;
+    case 'montures': return [d.etiquette, d.marque, d.modele, d.coloris].filter(Boolean).join(' ');
+    case 'ventes': return [d.facture, d.num].filter(Boolean).join(' · ');
+    case 'reglements': return (d.montant != null ? String(d.montant).replace('.', ',') + ' € ' : '') + (d.mode || '');
+    case 'facturesF': return d.ref || id;
+    case 'catalogue': case 'photos': return d.ean || id;
+    case 'inventaires': return d.perimetre || id;
+    case 'commandesC': return (d.source || '') + ' ' + (d.numero || '');
+    case 'meta': return id === 'societe' ? 'Ma société' : id;
+    default: return d.num || d.nom || id;
+  }
+};
+const short = v => { if (v == null || v === '') return '—'; if (typeof v === 'object') return Array.isArray(v) ? v.length + ' élément(s)' : '…'; const s = String(v); return s.length > 60 ? s.slice(0, 57) + '…' : s; };
+function diffOf(a, b) {
+  const keys = [...new Set([...Object.keys(a || {}), ...Object.keys(b || {})])].filter(k => !['updated', 'regMig'].includes(k));
+  return keys.filter(k => JSON.stringify((a || {})[k]) !== JSON.stringify((b || {})[k])).map(k => ({ champ: k, avant: short((a || {})[k]), apres: short((b || {})[k]) }));
+}
+async function journaliser(client, user, items) {
+  const rows = [];
+  const byKind = {};
+  items.forEach(it => { (byKind[it.kind] = byKind[it.kind] || []).push(it); });
+  for (const [kind, list] of Object.entries(byKind)) {
+    const useful = list.filter(it => {
+      if (kind === 'meta' && /^seq/.test(it.id)) return false;
+      if (it.action === 'modification') {
+        const ch = it.diff.map(x => x.champ);
+        if (!ch.length) return false;
+        if (kind === 'montures' && ch.every(c => c === 'qte' || c === 'pa' || c === 'pv')) return false; // mouvements de stock liés aux ventes et entrées
+      }
+      return true;
+    });
+    if (!useful.length) continue;
+    if (useful.length > 15) {
+      const n = a => useful.filter(x => x.action === a).length;
+      rows.push([user.id, user.nom, kind, null, 'lot', `${useful.length} ${KLABEL[kind] || kind} : ${n('creation')} créé(s), ${n('modification')} modifié(s), ${n('suppression')} supprimé(s)`, null]);
+    } else useful.forEach(it => rows.push([user.id, user.nom, kind, it.id, it.action, it.label, it.diff && it.diff.length ? JSON.stringify(it.diff.slice(0, 12)) : null]));
+  }
+  for (const r of rows) await client.query('insert into activite(user_id,user_nom,kind,ent_id,action,label,details) values($1,$2,$3,$4,$5,$6,$7)', r);
+}
+app.get('/api/activite', needAuth, wrap(async (req, res) => {
+  const lim = Math.min(300, Math.max(1, +req.query.limit || 100)), before = +req.query.before || null;
+  const where = [], args = [];
+  if (before) { args.push(before); where.push(`id < $${args.length}`); }
+  if (req.query.kind) { args.push(String(req.query.kind)); where.push(`kind = $${args.length}`); }
+  if (req.query.user) { args.push(+req.query.user); where.push(`user_id = $${args.length}`); }
+  args.push(lim);
+  const { rows } = await pool.query(`select id,at,user_id,user_nom,kind,ent_id,action,label,details from activite ${where.length ? 'where ' + where.join(' and ') : ''} order by id desc limit $${args.length}`, args);
+  const { rows: users } = await pool.query('select id,nom from users order by nom');
+  res.json({ rows, users, kinds: KLABEL });
+}));
+
 app.post('/api/sync', json, needAuth, wrap(async (req, res) => {
   const ups = Array.isArray(req.body.upserts) ? req.body.upserts : [];
   const dels = Array.isArray(req.body.deletes) ? req.body.deletes : [];
   const uid = req.session.user.id;
   const client = await pool.connect();
+  const trace = [];
   try {
     await client.query('begin');
+    /* état précédent, pour l'historique */
+    const prev = new Map();
+    const all = [...ups, ...dels].filter(x => x && x.kind);
+    if (all.length) {
+      const { rows } = await client.query('select e.kind,e.id,e.data,e.deleted from entities e join unnest($1::text[],$2::text[]) as t(k,i) on e.kind=t.k and e.id=t.i', [all.map(x => String(x.kind)), all.map(x => String(x.id))]);
+      rows.forEach(r => prev.set(r.kind + '\u0001' + r.id, r));
+    }
     for (const u of ups) {
       const kind = String(u.kind), id = String(u.id);
       if (kind !== 'meta' && !KINDS.includes(kind)) continue;
@@ -164,12 +231,19 @@ app.post('/api/sync', json, needAuth, wrap(async (req, res) => {
         `insert into entities(kind,id,data,deleted,updated_at,updated_by) values($1,$2,$3,false,clock_timestamp(),$4)
          on conflict(kind,id) do update set data=excluded.data, deleted=false, updated_at=clock_timestamp(), updated_by=excluded.updated_by`,
         [kind, id, data, uid]);
+      const p0 = prev.get(kind + '\u0001' + id), was = p0 && !p0.deleted ? p0.data : null;
+      const dd = kind === 'meta' ? (was ? was.v : null) : was, nd = kind === 'meta' ? data.v : data;
+      if (kind !== 'meta' || (dd && typeof dd === 'object') || (nd && typeof nd === 'object'))
+        trace.push({ kind, id, action: was ? 'modification' : 'creation', label: labelOf(kind, id, nd), diff: was && typeof dd === 'object' && typeof nd === 'object' ? diffOf(dd, nd) : [] });
     }
     for (const d of dels) {
       const kind = String(d.kind), id = String(d.id);
       if (!KINDS.includes(kind)) continue;
       await client.query('update entities set deleted=true, updated_at=clock_timestamp(), updated_by=$3 where kind=$1 and id=$2', [kind, id, uid]);
+      const p0 = prev.get(kind + '\u0001' + id);
+      if (p0 && !p0.deleted) trace.push({ kind, id, action: 'suppression', label: labelOf(kind, id, p0.data), diff: [] });
     }
+    await journaliser(client, req.session.user, trace);
     await client.query('commit');
     res.json({ ok: true });
   } catch (e) { await client.query('rollback'); throw e; } finally { client.release(); }
@@ -262,6 +336,16 @@ app.get('/api/files/:id', needAuth, wrap(async (req, res) => {
 app.delete('/api/files/:id', needAuth, wrap(async (req, res) => {
   await pool.query('delete from files where id=$1', [req.params.id]);
   res.json({ ok: true });
+}));
+
+/* ---------- Commandes entrantes (DIOPTRA → Prismea), avec clé d'intégration psm_ ---------- */
+app.post('/api/commandes', json, wrap(async (req, res) => { const r = await integ.receive(req); res.status(r.status).json(r.body); }));
+app.get('/api/catalogue', wrap(async (req, res) => { const r = await integ.catalogue(req); res.status(r.status).json(r.body); }));
+app.get('/api/integration/cles', needAuth, wrap(async (req, res) => res.json({ cles: await integ.publicList(), url: req.protocol + '://' + req.get('host') + '/api/commandes' })));
+app.post('/api/integration/cles', json, needAuth, wrap(async (req, res) => res.json(await integ.create((req.body || {}).nom, req.session.user.id))));
+app.post('/api/integration/cles/:id/actif', json, needAuth, wrap(async (req, res) => {
+  const ok = await integ.setActif(req.params.id, (req.body || {}).actif, req.session.user.id);
+  res.status(ok ? 200 : 404).json(ok ? { ok: true } : { error: 'introuvable' });
 }));
 
 /* ---------- Connexion DIOPTRA (la clé ne quitte jamais le serveur) ---------- */

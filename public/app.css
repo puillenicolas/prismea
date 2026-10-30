@@ -425,3 +425,10 @@ tr.avoir-row td b{color:var(--ink)}
 .cf-panel ul{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:3px;font-size:13px}
 .cf-panel li{display:flex;justify-content:space-between;gap:8px}
 .cf-panel li.ok b{color:var(--ok)}
+.up{color:var(--ok)}
+.dz-docs{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:14px 0;padding:12px 14px;border:1px solid var(--line);border-radius:10px}
+.dz-docs>div{display:flex;flex-direction:column;gap:2px}
+/* Historique */
+.hist-det{font-size:12.5px;color:var(--muted);max-width:420px}
+.hist-ch{display:inline-block;margin:0 10px 2px 0}
+.hist-ch b{color:var(--ink);font-weight:600}

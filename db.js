@@ -35,6 +35,18 @@ async function migrate() {
       created_at timestamptz not null default now(),
       created_by integer references users(id)
     );
+    create table if not exists activite(
+      id bigserial primary key,
+      at timestamptz not null default now(),
+      user_id integer references users(id),
+      user_nom text,
+      kind text not null,
+      ent_id text,
+      action text not null,
+      label text,
+      details jsonb
+    );
+    create index if not exists activite_at on activite(at desc);
     create table if not exists settings(
       key text primary key,
       value jsonb not null,

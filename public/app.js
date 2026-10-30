@@ -147,7 +147,7 @@ function viewHome(){
   const tile=(href,ico,label,desc)=>`<${href?'a href="'+href+'"':'button data-soon="'+label+'"'} class="tile"><span class="tile-ico">${ico}</span><span class="tile-go">${ICO.go}</span><span class="tile-label">${label}</span><span class="tile-desc">${desc}</span></${href?'a':'button'}>`;
   return`<section class="hello"><span class="eyebrow">Centrale d'achat · Montures</span><h1>${new Date().getHours()<18?'Bonjour':'Bonsoir'}</h1><p>Choisissez un module pour commencer.</p></section>
   <section class="tiles" aria-label="Modules">
-   ${tile('#clients',ICO.client,'Client',n?`<span class="tile-count">${n} client${n>1?'s':''}</span> enregistré${n>1?'s':''}.`:'Les opticiens et magasins qui achètent à la centrale.')}
+   ${tile((S.commandesC||[]).some(x=>x.statut==='nouvelle')?'#commandes-recues':'#clients',ICO.client,'Client',(S.commandesC||[]).some(x=>x.statut==='nouvelle')?`<span class="tile-count">${(S.commandesC||[]).filter(x=>x.statut==='nouvelle').length} commande(s) reçue(s)</span> à traiter.`:n?`<span class="tile-count">${n} client${n>1?'s':''}</span> enregistré${n>1?'s':''}.`:'Les opticiens et magasins qui achètent à la centrale.')}
    ${tile('#stock',ICO.stock,'Stock',(()=>{const q=S.montures.reduce((t,m)=>t+Math.max(0,m.qte),0);return q?`<span class="tile-count">${q} monture${q>1?'s':''}</span> en stock.`:'Les montures en stock et les entrées de marchandise.'})())}
    ${tile('#caisse',ICO.caisse,'Caisse',(()=>{const n=S.ventes.filter(v=>resteOf(v)>0.005).length;return n?`<span class="tile-count">${n} facture${n>1?'s':''}</span> à encaisser.`:'Journal des ventes, règlements, factures et caisse de la semaine.'})())}
    ${tile('#achats',ICO_ACHAT,'Achats',(()=>{const o=(S.facturesF||[]).filter(f=>resteF(f)>0.005),l=o.filter(f=>statutF(f)==='retard').length;return o.length?`<span class="tile-count">${o.length} facture${o.length>1?'s':''}</span> fournisseur à payer${l?` · <span class="warn-txt">${l} en retard</span>`:''}.`:'Factures fournisseurs, échéances et paiements.'})())}
@@ -161,6 +161,7 @@ function viewClients(){
   const used=[...new Set(S.clients.map(c=>c.pays).filter(Boolean))].map(paysByCode).filter(Boolean).sort((a,b)=>a[1].localeCompare(b[1],'fr'));
   return`<a class="back" href="#">← Accueil</a>
   <div class="head"><div><h1>Client</h1><p>Les opticiens et magasins qui achètent à la centrale.</p></div><button class="btn primary" data-act="new">Nouveau client</button></div>
+  ${(()=>{const n=(S.commandesC||[]).filter(x=>x.statut==='nouvelle').length;return n?`<a class="notice plain" href="#commandes-recues" style="display:flex;justify-content:space-between;text-decoration:none"><span><b>${n} commande${n>1?'s':''} reçue${n>1?'s':''}</b> d'opticiens (DIOPTRA) à traiter</span><span>Voir →</span></a>`:(S.commandesC||[]).length?`<p class="hint"><a href="#commandes-recues">Commandes reçues des opticiens</a></p>`:''})()}
   ${S.clients.length?`<div class="toolbar"><input id="q" type="search" placeholder="Rechercher par nom, code, contact, ville ou téléphone" aria-label="Rechercher un client">
    <select id="fp" aria-label="Filtrer par pays"><option value="">Tous les pays</option>${used.map(p=>`<option value="${p[0]}">${esc(p[1])}</option>`).join('')}</select></div>
   <div class="table-wrap"><table><thead><tr><th>Code</th><th>Client</th><th>Pays</th><th>Ville</th><th>Téléphone</th><th class="num">Remise</th><th class="num">Plafond crédit</th></tr></thead><tbody id="rows"></tbody></table></div>
@@ -397,6 +398,7 @@ async function validateDoc(){
     S.seqD=Math.max(S.seqD||0,nums[0]);S.devis.push({...base,num:'D'+y+'-'+pad4(nums[0]),validite:doc.validite||base.date.slice(0,10)});
   }
   const kind=doc.kind,cid=doc.clientId,num=kind==='vente'?S.ventes[S.ventes.length-1].num:S.devis[S.devis.length-1].num;
+  if(doc.fromCommande){const cc=(S.commandesC||[]).find(x=>x.id===doc.fromCommande);if(cc){cc.statut='traitee';cc.traiteeLe=new Date().toISOString();cc[kind==='vente'?'venteId':'devisId']=(kind==='vente'?S.ventes:S.devis).slice(-1)[0].id;cc.clientId=cid}}
   save();doc=null;location.hash='client-'+cid;toast((kind==='vente'?'Vente ':'Devis ')+num+' enregistré'+(kind==='vente'?'e':''));
 }
 function showDoc(id){
@@ -411,6 +413,64 @@ function showDoc(id){
   <dl class="totals" style="min-width:250px">${remTotals(d)}${taxLines(d,regOf(d),d.tvaIntra)}</dl></div>
   ${d.kind==='devis'&&d.venteId?`<p class="hint">Transformé en vente ${esc((S.ventes.find(v=>v.id===d.venteId)||{}).num||'')}.</p>`:''}${d.kind==='devis'&&d.proforma?`<p class="hint">Proforma ${esc(pfNum(d))} éditée le ${dF.format(new Date(d.proforma.le))}.</p>`:''}`,
   d.kind==='devis'?`<button class="btn" data-act="pf-open" data-id="${d.id}" style="margin-right:auto">Facture proforma</button>${d.venteId?'':`<button class="btn" data-act="dv-vente" data-id="${d.id}">Transformer en vente</button>`}<button class="btn primary" data-act="close">Fermer</button>`:`<button class="btn primary" data-act="close">Fermer</button>`);
+}
+/* ---------- Commandes reçues des opticiens (DIOPTRA) ---------- */
+S.commandesC=S.commandesC||[];
+function viewCommandesRecues(){
+  const L=[...S.commandesC].sort((a,b)=>(a.statut==='nouvelle'?0:1)-(b.statut==='nouvelle'?0:1)||b.recuLe.localeCompare(a.recuLe));
+  const clients=[...S.clients].sort((a,b)=>a.nom.localeCompare(b.nom,'fr'));
+  return`<a class="back" href="#clients">← Clients</a><div class="head"><div><h1>Commandes reçues</h1><p>Commandes envoyées par les opticiens depuis DIOPTRA. Transformez-les en vente ou en devis : les prix et remises du client s'appliquent.</p></div></div>
+  ${L.length?L.map(cc=>{const c=cli(cc.clientId),ok=cc.lignes.filter(l=>mon(l.montureId)),nb=cc.lignes.reduce((t,l)=>t+l.qte,0),manque=cc.lignes.filter(l=>{const m=mon(l.montureId);return m&&l.qte>m.qte}).length;
+    return`<section class="panel cc-card${cc.statut==='nouvelle'?'':' done'}"><div class="row-between"><div><b>${esc(cc.source)} · commande ${esc(cc.numero)}</b><span class="sub">Reçue le ${dtF.format(new Date(cc.recuLe))} · magasin « ${esc(cc.magasin||'non précisé')} » · ${nb} monture${nb>1?'s':''}</span></div>
+      <span class="pill ${cc.statut==='nouvelle'?'warn':cc.statut==='traitee'?'ok':'neutral'}">${cc.statut==='nouvelle'?'À traiter':cc.statut==='traitee'?'Traitée':'Archivée'}</span></div>
+      ${cc.commentaire?`<p class="hint">« ${esc(cc.commentaire)} »</p>`:''}
+      <div class="table-wrap" style="margin:10px 0"><table><thead><tr><th>Monture demandée</th><th>Dans Prismea</th><th class="num">Qté</th><th class="num">En stock</th></tr></thead><tbody>
+      ${cc.lignes.map(l=>{const m=mon(l.montureId);return`<tr><td><b>${esc([l.marque,l.modele].filter(Boolean).join(' ')||l.etiquette||l.ean)}</b><span class="sub">${esc([l.coloris,l.taille,l.ean?'EAN '+l.ean:''].filter(Boolean).join(' · '))}</span></td>
+        <td>${m?`<span class="mono">${esc(m.etiquette)}</span> · ${esc(desig(m))}`:'<span class="warn-txt">Introuvable</span>'}</td><td class="num">${l.qte}</td><td class="num">${m?(m.qte>=l.qte?m.qte:`<span class="warn-txt">${m.qte}</span>`):'—'}</td></tr>`}).join('')}
+      </tbody></table></div>
+      ${cc.statut==='nouvelle'?`<div class="row-between"><label style="min-width:260px">Client<select data-ccclient="${cc.id}"><option value="">Choisir le client…</option>${clients.map(x=>`<option value="${x.id}" ${x.id===cc.clientId?'selected':''}>${esc(x.nom)}${x.dioptraMagasin?' ('+esc(x.dioptraMagasin)+')':''}</option>`).join('')}</select>${c?'':'<span class="hint">Aucun client n\'a ce magasin DIOPTRA dans sa fiche</span>'}</label>
+        <span class="row-btns"><button class="btn small ghost" data-act="cc-arch" data-id="${cc.id}">Archiver</button><button class="btn small" data-act="cc-doc" data-k="devis" data-id="${cc.id}" ${c&&ok.length?'':'disabled'}>Créer un devis</button><button class="btn small primary" data-act="cc-doc" data-k="vente" data-id="${cc.id}" ${c&&ok.length?'':'disabled'}>Créer la vente</button></span></div>
+        ${ok.length<cc.lignes.length?`<p class="hint warn-txt">${cc.lignes.length-ok.length} ligne${cc.lignes.length-ok.length>1?'s':''} introuvable${cc.lignes.length-ok.length>1?'s':''} : elle${cc.lignes.length-ok.length>1?'s ne seront':' ne sera'} pas reprise${cc.lignes.length-ok.length>1?'s':''}.</p>`:''}${manque?`<p class="hint warn-txt">${manque} référence${manque>1?'s':''} en stock insuffisant.</p>`:''}`
+      :`<p class="hint">${cc.venteId?`Vente ${esc((S.ventes.find(v=>v.id===cc.venteId)||{}).num||'')}`:cc.devisId?`Devis ${esc((S.devis.find(v=>v.id===cc.devisId)||{}).num||'')}`:''}${c?' · '+esc(c.nom):''}</p>`}
+    </section>`}).join(''):'<div class="table-wrap"><div class="empty-state"><h3>Aucune commande reçue</h3><p>Créez une clé dans Paramètres › Commandes des opticiens et renseignez-la dans DIOPTRA.</p></div></div>'}`;
+}
+function ccToDoc(id,kind){
+  const cc=S.commandesC.find(x=>x.id===id);if(!cc)return;const c=cli(cc.clientId);if(!c){toast('Choisissez le client.');return}
+  const lignes=cc.lignes.filter(l=>mon(l.montureId)).map(l=>{const m=mon(l.montureId);return{montureId:m.id,etiquette:m.etiquette,designation:desig(m),detail:[m.coloris,tailleOf(m)].filter(Boolean).join(' · '),qte:l.qte,pu:m.pv}});
+  const v=new Date();v.setDate(v.getDate()+30);
+  doc={kind,clientId:c.id,lignes,remise:c.remise||0,regime:regimeOf(c),tvaIntra:c.tvaIntra||'',paiement:PAY_LATER,validite:v.toISOString().slice(0,10),fromCommande:cc.id};
+  location.hash=kind+'-'+c.id;toast(`Commande ${cc.numero} reprise : vérifiez puis validez`);
+}
+/* ---------- Historique des modifications ---------- */
+let HIST={rows:[],users:[],kinds:{},kind:'',user:'',done:false,loading:false};
+const ACT_L={creation:['Création','ok'],modification:['Modification','neutral'],suppression:['Suppression','bad'],lot:['Import / lot','neutral'],envoi:['Envoi','neutral']};
+const CHAMP_L={nom:'Nom',qte:'Stock',pv:'Prix de vente',pa:'Prix d\'achat',remise:'Remise',plafond:'Plafond',email:'E-mail',tel:'Téléphone',adresse:'Adresse',coloris:'Coloris',marque:'Marque',modele:'Modèle',ean:'EAN',
+  expedition:'Expédition',documents:'Documents',douane:'Douane',dioptra:'DIOPTRA',attestation:'Attestation',statut:'Statut',traiteeLe:'Traitée le',venteId:'Vente',devisId:'Devis',lignes:'Lignes',relances:'Relances',coef:'Coefficient',dioptraMagasin:'Magasin DIOPTRA',photo:'Photo',matiere:'Matière',seuil:'Seuil d\'alerte'};
+async function loadHist(more){
+  if(HIST.loading)return;HIST.loading=true;
+  const q=new URLSearchParams({limit:'100'});if(HIST.kind)q.set('kind',HIST.kind);if(HIST.user)q.set('user',HIST.user);if(more&&HIST.rows.length)q.set('before',HIST.rows[HIST.rows.length-1].id);
+  try{const r=await fetch('/api/activite?'+q,{credentials:'same-origin'});const j=await r.json();HIST.users=j.users;HIST.kinds=j.kinds;HIST.rows=more?[...HIST.rows,...j.rows]:j.rows;HIST.done=j.rows.length<100}catch(e){}
+  HIST.loading=false;if(location.hash==='#historique')render();
+}
+function viewHistorique(){
+  const det=r=>(r.details||[]).map(d=>`<span class="hist-ch"><b>${esc(CHAMP_L[d.champ]||d.champ)}</b> ${d.avant&&d.avant!=='—'?esc(d.avant)+' → ':''}${esc(d.apres)}</span>`).join('');
+  return`<a class="back" href="#parametres">← Paramètres</a><div class="head"><div><h1>Historique des modifications</h1><p>Qui a créé, modifié ou supprimé quoi, et quand. Les mouvements de stock liés aux ventes et aux entrées ne sont pas listés un par un.</p></div></div>
+  <div class="toolbar"><select id="h-user" aria-label="Utilisateur"><option value="">Tous les utilisateurs</option>${HIST.users.map(u=>`<option value="${u.id}" ${String(u.id)===HIST.user?'selected':''}>${esc(u.nom)}</option>`).join('')}</select>
+   <select id="h-kind" aria-label="Type"><option value="">Tous les types</option>${Object.entries(HIST.kinds).map(([k,l])=>`<option value="${k}" ${k===HIST.kind?'selected':''}>${esc(l)}</option>`).join('')}</select></div>
+  <div class="table-wrap"><table><thead><tr><th>Date</th><th>Par</th><th>Type</th><th>Action</th><th>Élément</th><th>Détail</th></tr></thead><tbody>
+  ${HIST.rows.length?HIST.rows.map(r=>{const[a,cl]=ACT_L[r.action]||[r.action,'neutral'];return`<tr><td style="white-space:nowrap">${dtF.format(new Date(r.at))}</td><td>${esc((r.user_nom||'').split(' ')[0]||'—')}</td><td>${esc(HIST.kinds[r.kind]||r.kind)}</td><td><span class="pill ${cl}">${a}</span></td><td>${esc(r.label||'')}</td><td class="hist-det">${det(r)}</td></tr>`}).join('')
+  :`<tr><td colspan="6"><div class="empty-state" style="padding:32px 12px"><p>${HIST.loading?'Chargement…':'Aucune modification enregistrée pour l\'instant.'}</p></div></td></tr>`}
+  </tbody></table></div>
+  ${HIST.rows.length&&!HIST.done?`<div class="row-btns" style="justify-content:center;margin-top:12px"><button class="btn" data-act="h-more">Afficher plus</button></div>`:''}`;
+}
+/* Paramètres : clés pour les commandes entrantes */
+let CLES=null;
+async function loadCles(){try{const r=await fetch('/api/integration/cles',{credentials:'same-origin'});if(r.ok)CLES=await r.json()}catch(e){}return CLES}
+function clesPanel(){
+  const L=(CLES&&CLES.cles)||[];
+  return`<section class="panel" id="cles-panel"><h3>Commandes des opticiens (API)</h3><p class="muted" style="margin-bottom:10px">Pour que DIOPTRA (ou un autre logiciel) envoie des commandes à Prismea. Adresse : <code>${esc(CLES?CLES.url:location.origin+'/api/commandes')}</code> (POST, en-tête <code>Authorization: Bearer &lt;clé&gt;</code>). Le catalogue en stock est lisible à <code>/api/catalogue</code> avec la même clé.</p>
+  ${L.length?`<div class="table-wrap"><table><thead><tr><th>Nom</th><th>Début de la clé</th><th>Créée le</th><th>Dernière utilisation</th><th></th></tr></thead><tbody>${L.map(k=>`<tr><td><b>${esc(k.nom)}</b>${k.actif?'':' <span class="pill neutral">Désactivée</span>'}</td><td class="mono">${esc(k.debut)}…</td><td>${dF.format(new Date(k.cree))}</td><td>${k.vu?dtF.format(new Date(k.vu)):'—'}</td><td class="num"><button class="link" data-act="cle-actif" data-id="${k.id}" data-on="${k.actif?0:1}">${k.actif?'Désactiver':'Réactiver'}</button></td></tr>`).join('')}</tbody></table></div>`:'<p class="hint">Aucune clé pour l\'instant.</p>'}
+  <div class="row-btns" style="justify-content:flex-start;margin-top:10px"><button class="btn" data-act="cle-new">Créer une clé</button></div><p class="hint" id="cle-new-out"></p></section>`;
 }
 /* Devis → vente : les lignes et remises du devis sont reprises dans une nouvelle vente, à valider */
 function devisToVente(id){
@@ -629,7 +689,7 @@ function viewStock(){
   }
   return`<a class="back" href="#">← Accueil</a>
   <div class="head"><div><h1>Stock</h1><p>${nb} monture${nb>1?'s':''} en stock · ${money(val)} au prix d'achat${alertes?` · <span class="warn-txt">${alertes} en alerte</span>`:''}</p></div>
-    <div class="row-btns"><a class="btn" href="#catalogue">${ICO_IMPORT} Importer un catalogue</a><button class="btn" data-act="etq-new">Imprimer des étiquettes</button><button class="btn" data-act="s-new">Nouvelle monture</button><a class="btn primary" href="#entree">Entrée de stock</a></div></div>
+    <div class="row-btns"><a class="btn" href="#catalogue">${ICO_IMPORT} Importer un catalogue</a><a class="btn" href="#inventaire">Inventaire</a><button class="btn" data-act="etq-new">Imprimer des étiquettes</button><button class="btn" data-act="s-new">Nouvelle monture</button><a class="btn primary" href="#entree">Entrée de stock</a></div></div>
   <div class="tabs" role="tablist">${tab('montures','Montures',S.montures.length)}${tab('receptions','Entrées de stock',S.receptions.length)}${tab('marques','Marques et coefficients',S.marques.length)}${tab('fournisseurs','Fournisseurs',S.fournisseurs.length)}${tab('commandes','Commandes fournisseur',(S.commandesF||[]).filter(x=>cfOpen(x)).length||null)}</div>${body}`;
 }
 function fillStock(){
@@ -664,6 +724,7 @@ function montureForm(m,onSaved){
     <label>Modèle <span class="req">*</span><input id="m-modele" value="${v('modele')}"></label>
     <label>Coloris<input id="m-coloris" value="${v('coloris')}"></label>
     <label>Code douanier<input id="m-hs" class="mono-in" value="${v('hs')}" placeholder="Ex. 9003110010"></label>
+    <label>Pays d'origine<input id="m-orig" value="${v('origine')}" placeholder="Ex. Italie, Chine"></label>
     <label>Matière<select id="m-mat"><option value="">Non renseignée</option>${[...new Set([...MATIERES,...(m.matiere?[m.matiere]:[])])].map(x=>`<option ${x===m.matiere?'selected':''}>${esc(x)}</option>`).join('')}</select></label>
   </fieldset>
   <fieldset class="three"><legend>Taille</legend>
@@ -696,7 +757,7 @@ function montureForm(m,onSaved){
     };
     ['m-marque','m-pa'].forEach(i=>$('#'+i).addEventListener('input',syncPv));$('#m-man').addEventListener('change',syncPv);syncPv();
     $('#m-ok').onclick=async()=>{
-      const d={ean:$('#m-ean').value.trim(),marque:$('#m-marque').value.trim(),modele:$('#m-modele').value.trim(),coloris:$('#m-coloris').value.trim(),matiere:$('#m-mat').value,hs:$('#m-hs').value.replace(/\s/g,''),
+      const d={ean:$('#m-ean').value.trim(),marque:$('#m-marque').value.trim(),modele:$('#m-modele').value.trim(),coloris:$('#m-coloris').value.trim(),matiere:$('#m-mat').value,hs:$('#m-hs').value.replace(/\s/g,''),origine:$('#m-orig').value.trim(),
         calibre:$('#m-cal').value.trim(),pont:$('#m-pont').value.trim(),branche:$('#m-br').value.trim(),
         pa:r2(+$('#m-pa').value||0),pv:r2(+$('#m-pv').value||0),pvManuel:!!(coefOf($('#m-marque').value.trim())&&$('#m-man').checked),seuil:Math.max(0,Math.round(+$('#m-seuil').value||0))};
       if(!d.marque||!d.modele){toast('La marque et le modèle sont obligatoires.');return}
@@ -717,6 +778,70 @@ async function montureFromCatalogue(c){
 }
 
 /* Entrée de stock */
+/* ---------- Inventaire au scan ----------
+   Le comptage en cours est gardé dans ce navigateur (en cas de rechargement) ; la validation corrige le stock. */
+S.inventaires=S.inventaires||[];
+let inv=null;
+const INV_KEY='prismea-inventaire';
+const invSave=()=>{try{localStorage.setItem(INV_KEY,JSON.stringify(inv))}catch(e){}};
+const invLoad=()=>{try{const x=JSON.parse(localStorage.getItem(INV_KEY)||'null');return x&&x.counts?x:null}catch(e){return null}};
+const invScope=()=>S.montures.filter(m=>!inv.marque||m.marque===inv.marque);
+function viewInventaire(){
+  if(!inv)inv=invLoad();
+  const marques=[...new Set(S.montures.map(m=>m.marque))].sort((a,b)=>a.localeCompare(b,'fr'));
+  if(!inv)return`<a class="back" href="#stock">← Stock</a><div class="head"><div><h1>Inventaire</h1><p>Scannez toutes les montures présentes : Prismea compare au stock théorique et corrige les écarts à la validation.</p></div></div>
+  <section class="panel"><h3>Nouvel inventaire</h3><div class="form-row"><label>Périmètre<select id="inv-scope"><option value="">Tout le stock (${S.montures.length} références)</option>${marques.map(m=>`<option value="${esc(m)}">Marque ${esc(m)} (${S.montures.filter(x=>x.marque===m).length} références)</option>`).join('')}</select><span class="hint">Un inventaire par marque permet de compter un tiroir ou une vitrine à la fois.</span></label></div>
+  <p class="hint">Évitez de vendre les montures du périmètre pendant le comptage : le stock sera remplacé par les quantités comptées.</p>
+  <button class="btn primary" data-act="inv-start">Commencer le comptage</button></section>
+  ${invHistory()}`;
+  const scope=invScope(),counted=Object.values(inv.counts).reduce((t,n)=>t+n,0);
+  const rows=scope.map(m=>({m,theo:Math.max(0,m.qte),c:inv.counts[m.id]||0})).map(x=>({...x,e:x.c-x.theo}));
+  const ecarts=rows.filter(x=>x.e!==0).sort((a,b)=>Math.abs(b.e*(b.m.pa||0))-Math.abs(a.e*(a.m.pa||0)));
+  const val=ecarts.reduce((t,x)=>t+x.e*(x.m.pa||0),0);
+  const recent=(inv.ordre||[]).slice(-8).reverse().map(id=>mon(id)).filter(Boolean);
+  return`<a class="back" href="#stock">← Stock</a><div class="head"><div><h1>Inventaire${inv.marque?' · '+esc(inv.marque):''}</h1><p>Commencé le ${dtF.format(new Date(inv.debut))} · ${scope.length} références dans le périmètre</p></div></div>
+  <div class="doc-grid"><div class="doc-main">
+   <section class="panel scan"><label for="inv-scan">Scannez chaque monture (code étiquette ou EAN)</label>
+    <div class="scan-row"><span class="scan-ico">${ICO_SCAN}</span><input id="inv-scan" autocomplete="off" spellcheck="false" placeholder="Scan, puis Entrée"><button class="btn primary" data-act="inv-add">Compter</button></div>
+    <p class="scan-msg" id="inv-msg" role="status"></p></section>
+   ${recent.length?`<section class="panel"><h3>Derniers scans</h3><div class="docs">${recent.map(m=>`<div class="doc-row static"><span class="with-thumb">${thumb(m,'sm')}<span><b>${esc(desig(m))}</b><span class="sub"><span class="mono">${esc(m.etiquette)}</span> · ${esc(m.coloris||'')}</span></span></span><span class="row-btns"><b>${inv.counts[m.id]||0}</b><button class="btn small" data-act="inv-minus" data-id="${m.id}" aria-label="Retirer un">−1</button></span></div>`).join('')}</div></section>`:''}
+   <section class="panel"><div class="row-between"><h3 style="margin:0">Écarts</h3><button class="btn small" data-act="inv-csv" ${ecarts.length?'':'disabled'}>Exporter (CSV)</button></div>
+    ${ecarts.length?`<div class="table-wrap" style="margin-top:10px"><table><thead><tr><th>Monture</th><th class="num">Théorique</th><th class="num">Compté</th><th class="num">Écart</th><th class="num">Valeur (achat)</th></tr></thead><tbody>
+    ${ecarts.slice(0,200).map(x=>`<tr><td><b>${esc(desig(x.m))}</b><span class="sub"><span class="mono">${esc(x.m.etiquette)}</span> · ${esc(x.m.coloris||'')}</span></td><td class="num">${x.theo}</td><td class="num">${x.c}</td><td class="num"><b class="${x.e<0?'down':'up'}">${x.e>0?'+':''}${x.e}</b></td><td class="num">${money(x.e*(x.m.pa||0))}</td></tr>`).join('')}
+    </tbody></table></div>${ecarts.length>200?`<p class="hint">… ${ecarts.length-200} autres écarts dans l'export CSV.</p>`:''}`:'<p class="muted">Aucun écart pour l\'instant.</p>'}</section>
+   ${(inv.inconnus||[]).length?`<section class="panel"><h3>Codes inconnus</h3><p class="hint">Ces codes ne correspondent à aucune monture du stock : à créer en fiche ou à vérifier.</p><p class="mono" style="font-size:13px">${inv.inconnus.map(esc).join(', ')}</p></section>`:''}
+  </div><aside class="panel doc-side"><h3>Comptage</h3>
+   <dl class="totals"><dt>Montures comptées</dt><dd>${counted}</dd><dt>Stock théorique</dt><dd>${rows.reduce((t,x)=>t+x.theo,0)}</dd><dt>Références avec écart</dt><dd>${ecarts.length}</dd><dt class="big">Écart en valeur</dt><dd class="big ${val<0?'down':''}">${money(val)}</dd></dl>
+   <p class="hint" style="margin:0">Les références du périmètre qui n'ont pas été scannées seront mises à 0 à la validation.</p>
+   <button class="btn primary block" data-act="inv-ok">Valider l'inventaire</button><button class="btn block ghost" data-act="inv-cancel">Abandonner le comptage</button></aside></div>`;
+}
+function invHistory(){
+  const L=[...S.inventaires].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,10);
+  return L.length?`<section class="panel"><h3>Inventaires validés</h3><div class="table-wrap"><table><thead><tr><th>Date</th><th>Périmètre</th><th>Par</th><th class="num">Références avec écart</th><th class="num">Écart en pièces</th><th class="num">Écart en valeur</th></tr></thead><tbody>
+  ${L.map(i=>`<tr><td>${dF.format(new Date(i.date))}</td><td>${esc(i.perimetre)}</td><td>${esc(i.par||'')}</td><td class="num">${i.lignes.length}</td><td class="num">${i.lignes.reduce((t,l)=>t+l.ecart,0)}</td><td class="num">${money(i.valeur)}</td></tr>`).join('')}</tbody></table></div></section>`:'';
+}
+function invScan(){
+  const i=$('#inv-scan');if(!i||!inv)return;const code=i.value.trim();if(!code)return;const m=findMonture(code);const msg=$('#inv-msg');
+  if(!m){inv.inconnus=[...new Set([...(inv.inconnus||[]),code])];invSave();render();const n=$('#inv-msg');if(n){n.textContent=`Code inconnu : ${code}`;n.classList.add('bad')}$('#inv-scan')?.focus();return}
+  if(inv.marque&&m.marque!==inv.marque){if(msg){msg.textContent=`${desig(m)} n'est pas de la marque ${inv.marque} : non comptée.`;msg.classList.add('bad')}i.select();return}
+  inv.counts[m.id]=(inv.counts[m.id]||0)+1;inv.ordre=[...(inv.ordre||[]).filter(x=>x!==m.id),m.id];invSave();render();
+  const n=$('#inv-msg');if(n){n.textContent=`${desig(m)} ${m.coloris||''} : ${inv.counts[m.id]} compté${inv.counts[m.id]>1?'s':''} (théorique ${Math.max(0,m.qte)})`;n.classList.remove('bad')}$('#inv-scan')?.focus();
+}
+function invValidate(){
+  const scope=invScope();const lignes=scope.map(m=>({m,theo:Math.max(0,m.qte),c:inv.counts[m.id]||0})).filter(x=>x.c!==x.theo);
+  const val=r2(lignes.reduce((t,x)=>t+(x.c-x.theo)*(x.m.pa||0),0));
+  lignes.forEach(x=>{x.m.qte=x.c});
+  S.inventaires.push({id:'i'+Date.now().toString(36),date:new Date().toISOString(),debut:inv.debut,par:(window.__PRISMEA__.user||{}).nom||'',perimetre:inv.marque?'Marque '+inv.marque:'Tout le stock',
+    references:scope.length,comptees:Object.values(inv.counts).reduce((t,n)=>t+n,0),valeur:val,
+    lignes:lignes.map(x=>({montureId:x.m.id,etiquette:x.m.etiquette,designation:desig(x.m),theorique:x.theo,compte:x.c,ecart:x.c-x.theo,pa:x.m.pa||0})),inconnus:inv.inconnus||[]});
+  save();inv=null;try{localStorage.removeItem(INV_KEY)}catch(e){}render();toast(`Inventaire validé : ${lignes.length} référence${lignes.length>1?'s':''} corrigée${lignes.length>1?'s':''}`);
+}
+function invCSV(){
+  const rows=[['Étiquette','EAN','Marque','Modèle','Coloris','Théorique','Compté','Écart','Prix d\'achat','Valeur écart']];
+  invScope().forEach(m=>{const t=Math.max(0,m.qte),c=inv.counts[m.id]||0;if(t!==c)rows.push([m.etiquette,m.ean||'',m.marque,m.modele,m.coloris||'',t,c,c-t,csvNum(m.pa||0),csvNum((c-t)*(m.pa||0))])});
+  offerFile(`Inventaire ecarts ${isoD(new Date())}.csv`,csvOf(rows));
+}
+
 /* ---------- Commandes fournisseur et réassort ---------- */
 S.commandesF=S.commandesF||[];S.seqCF=S.seqCF||0;
 const cfOf=id=>S.commandesF.find(x=>x.id===id);
@@ -1430,6 +1555,12 @@ document.addEventListener('click',e=>{
     case'ra-q':if(ra){ra.qte[id]=Math.max(0,(ra.qte[id]||0)+(+b.dataset.d));render()}break;
     case'ra-xq':if(ra){const x=ra.extra[+b.dataset.i];x.qte=Math.max(0,x.qte+(+b.dataset.d));render()}break;
     case'ra-ok':raCreate();break;
+    case'inv-start':inv={marque:$('#inv-scope').value,debut:new Date().toISOString(),counts:{},ordre:[],inconnus:[]};invSave();render();break;
+    case'inv-add':invScan();break;
+    case'inv-minus':if(inv&&inv.counts[id]){inv.counts[id]--;if(!inv.counts[id])delete inv.counts[id];invSave();render()}break;
+    case'inv-csv':invCSV();break;
+    case'inv-ok':{if(!b.dataset.sure){b.dataset.sure='1';b.textContent='Confirmer : le stock sera corrigé';break}invValidate();break}
+    case'inv-cancel':{if(!b.dataset.sure){b.dataset.sure='1';b.textContent='Confirmer l\'abandon';break}inv=null;try{localStorage.removeItem(INV_KEY)}catch(e){}render();break}
     case'cf-open':cfDetail(id);break;
     case'cf-pdf':{const cf=cfOf(id);if(!cf)break;if(!window.jspdf){toast('Le module PDF n\'a pas pu se charger.');break}offerFile(cfFile(cf),commandePDF(cf));break}
     case'cf-mail':cfMail(id);break;
@@ -1656,6 +1787,60 @@ function impayesView(){
 /* ---------- Relevé de compte et relances ---------- */
 const openOf=cid=>S.ventes.filter(v=>v.clientId===cid&&resteOf(v)>0.005).sort((a,b)=>a.echeance.localeCompare(b.echeance));
 const releveFile=c=>`Releve de compte ${(c.nom||'client').replace(/[\\/:*?"<>|]/g,'')} ${isoD(new Date())}.pdf`;
+/* ---------- Documents de douane (export) ---------- */
+function douaneHead(pdf,title,sub,v){
+  const txt=x=>String(x??'').replace(/[  ]/g,' ').replace(/□/g,'/').replace(/[−–]/g,'-');
+  const s=S.societe,c=cli(v.clientId)||{},p=paysByCode(c.pays),e=expOf(v);const L=16,R=194;let y=16;
+  pdf.setFont('helvetica','bold');pdf.setFontSize(15);pdf.text(title,L,y);pdf.setFont('helvetica','normal');pdf.setFontSize(9);pdf.setTextColor(90);pdf.text(sub,L,y+5);pdf.setTextColor(0);
+  pdf.setFontSize(9);[[`N° / No`,v.facture],['Date',dF.format(new Date(v.date))],['LTA / AWB',e.suivi||'—']].forEach(([k,val],i)=>{pdf.setTextColor(100);pdf.text(k,140,y-2+i*4.6);pdf.setTextColor(0);pdf.text(txt(val),165,y-2+i*4.6)});
+  y+=14;const box=(x,t,lines)=>{pdf.setFillColor(246,248,250);pdf.roundedRect(x,y,87,36,2,2,'F');pdf.setFontSize(7.6);pdf.setTextColor(100);pdf.text(t,x+4,y+5);pdf.setTextColor(0);
+    pdf.setFont('helvetica','bold');pdf.setFontSize(9.6);pdf.text(txt(lines[0]||''),x+4,y+10.5);pdf.setFont('helvetica','normal');pdf.setFontSize(8.2);lines.slice(1).filter(Boolean).slice(0,6).forEach((t,i)=>pdf.text(pdf.splitTextToSize(txt(t),80)[0],x+4,y+15+i*3.7))};
+  box(L,'EXPÉDITEUR / SHIPPER',[s.nom,s.adresse,[s.cp,s.ville,'France'].filter(Boolean).join(' '),s.tel?'Tél. '+s.tel:'',s.tvaIntra?'TVA / VAT '+s.tvaIntra:'',s.eori?'EORI '+s.eori:'EORI : à compléter dans les paramètres']);
+  box(107,'DESTINATAIRE / CONSIGNEE',[c.nom,...(c.adresse||'').split('\n'),[c.ville,p?p[1]:''].filter(Boolean).join(', '),c.tel?'Tél. '+fmtTel(c.pays,c.tel):'',c.email||'',c.nif?'NIF '+c.nif:(c.tvaIntra?'VAT '+c.tvaIntra:'')]);
+  return y+42;
+}
+function commercialInvoicePDF(v){
+  const {jsPDF}=window.jspdf;const pdf=new jsPDF({unit:'mm',format:'a4'});
+  const txt=x=>String(x??'').replace(/[  ]/g,' ').replace(/□/g,'/').replace(/[−–]/g,'-');const eur=n=>txt(money(n));
+  const c=cli(v.clientId)||{},p=paysByCode(c.pays),e=expOf(v),pf=S.societe.proforma||{},colis=e.colis||[];const L=16,R=194;
+  let y=douaneHead(pdf,'FACTURE COMMERCIALE / COMMERCIAL INVOICE','Exportation définitive / Permanent export · Motif : vente / Reason: sale',v);
+  pdf.setFontSize(8.6);
+  const info=[['Incoterm',[pf.incoterm||'CPT',c.ville||(p?p[1]:'')].filter(Boolean).join(' ')],['Devise / Currency','EUR'],['Pays d\'origine / Country of origin',pf.origine||'—'],['Pays de destination',p?p[1]:'—'],['Colis / Packages',colis.length?String(colis.length):'—'],['Poids brut / Gross weight',colis.length?nfk.format(colis.reduce((t,x)=>t+(+x.kg||0),0))+' kg':'—']];
+  info.forEach(([k,val],i)=>{const x=i%2?107:L,yy=y+Math.floor(i/2)*5;pdf.setTextColor(100);pdf.text(txt(k),x,yy);pdf.setTextColor(0);pdf.text(txt(val),x+48,yy)});
+  y+=17;
+  const body=v.lignes.map(l=>{const pu=prixFacture(v,l),m=mon(l.montureId)||{};return[txt('Monture de lunettes / Spectacle frame - '+l.designation+(l.detail?' - '+l.detail:'')),txt(hsOf(l)||pf.hs||'9003'),txt(m.origine||pf.origine||''),String(l.qte),eur(pu),eur(r2(pu*l.qte))]});
+  pdf.autoTable({startY:y,head:[['Désignation / Description','Code SH / HS code','Origine','Qté / Qty','Prix unit. / Unit value','Total']],body,margin:{left:L,right:16},styles:{font:'helvetica',fontSize:7.8,cellPadding:1.8},headStyles:{fillColor:[10,102,112],textColor:255},
+    columnStyles:{1:{cellWidth:24},2:{cellWidth:18},3:{halign:'right',cellWidth:13},4:{halign:'right',cellWidth:22},5:{halign:'right',cellWidth:22}}});
+  y=pdf.lastAutoTable.finalY+6;
+  const nb=v.lignes.reduce((t,l)=>t+l.qte,0);
+  [['Nombre d\'articles / Number of items',String(nb)],['Valeur totale HT / Total value (ex. VAT)',eur(v.ht)]].forEach(([k,val],i)=>{pdf.setFont('helvetica',i?'bold':'normal');pdf.setFontSize(i?10.5:9);pdf.text(txt(k),100,y);pdf.text(val,R,y,{align:'right'});y+=6});
+  // récapitulatif par code SH
+  const byHS={};v.lignes.forEach(l=>{const k=hsOf(l)||pf.hs||'9003';byHS[k]=byHS[k]||{q:0,v:0};byHS[k].q+=l.qte;byHS[k].v+=prixFacture(v,l)*l.qte});
+  if(Object.keys(byHS).length){pdf.setFont('helvetica','normal');pdf.setFontSize(8.4);pdf.setTextColor(90);pdf.text('Récapitulatif par code SH / Summary by HS code :',L,y);y+=4.5;pdf.setTextColor(0);
+    Object.entries(byHS).forEach(([k,o])=>{pdf.text(txt(`${k} : ${o.q} article${o.q>1?'s':''} · ${money(o.v)}`),L+4,y);y+=4.2})}
+  y+=4;pdf.setFontSize(8.4);
+  [(regOf(v)==='ue'?'Livraison intracommunautaire exonérée de TVA, article 262 ter I du CGI.':'Exportation exonérée de TVA, article 262 I du CGI. / VAT exempt export.'),
+   'Je certifie que les informations figurant sur cette facture sont exactes et que l\'origine des marchandises est celle indiquée. / I certify that the information on this invoice is true and correct and that the origin of the goods is as stated.']
+   .forEach(t=>{const w=pdf.splitTextToSize(txt(t),R-L);pdf.text(w,L,y);y+=w.length*3.8+2});
+  y+=4;pdf.setTextColor(100);pdf.text(txt('Nom / Name : '+((window.__PRISMEA__.user||{}).nom||'')),L,y);pdf.text(txt('Date : '+dF.format(new Date())),L,y+5);pdf.text('Signature et cachet / Signature and stamp',120,y);pdf.setDrawColor(200);pdf.rect(120,y+2,74,22);pdf.setTextColor(0);
+  return pdf.output('arraybuffer');
+}
+function packingListPDF(v){
+  const {jsPDF}=window.jspdf;const pdf=new jsPDF({unit:'mm',format:'a4'});
+  const txt=x=>String(x??'').replace(/[  ]/g,' ').replace(/□/g,'/').replace(/[−–]/g,'-');
+  const e=expOf(v),colis=e.colis||[];const L=16,R=194;
+  let y=douaneHead(pdf,'LISTE DE COLISAGE / PACKING LIST','Facture / Invoice '+v.facture,v);
+  if(colis.length){
+    pdf.autoTable({startY:y,head:[['Colis / Package','Dimensions (cm)','Poids brut / Gross weight','Poids volumétrique']],body:colis.map((x,i)=>[String(i+1)+' / '+colis.length,x.l&&x.w&&x.h?`${x.l} × ${x.w} × ${x.h}`:'—',x.kg!=null?nfk.format(x.kg)+' kg':'—',volKg(x)?nfk.format(volKg(x))+' kg':'—']),
+      foot:[['Total',colis.length+' colis',nfk.format(colis.reduce((t,x)=>t+(+x.kg||0),0))+' kg',nfk.format(colis.reduce((t,x)=>t+volKg(x),0))+' kg']],
+      margin:{left:L,right:16},styles:{font:'helvetica',fontSize:8.6,cellPadding:2},headStyles:{fillColor:[10,102,112],textColor:255},footStyles:{fillColor:[238,241,244],textColor:20,fontStyle:'bold'}});
+    y=pdf.lastAutoTable.finalY+8;
+  }else{pdf.setFontSize(9);pdf.setTextColor(180,35,24);pdf.text('Colis non renseignés : saisissez le poids et les dimensions dans l\'onglet Expédition.',L,y);pdf.setTextColor(0);y+=8}
+  pdf.setFont('helvetica','bold');pdf.setFontSize(10);pdf.text('Contenu / Contents',L,y);y+=2;
+  pdf.autoTable({startY:y,head:[['Réf.','Désignation / Description','EAN','Qté / Qty']],body:v.lignes.map(l=>[txt(l.etiquette),txt(l.designation+(l.detail?' - '+l.detail:'')),txt((mon(l.montureId)||{}).ean||''),String(l.qte)]),
+    foot:[['','Total','',String(v.lignes.reduce((t,l)=>t+l.qte,0))]],margin:{left:L,right:16},styles:{font:'helvetica',fontSize:8.4,cellPadding:1.8},headStyles:{fillColor:[10,102,112],textColor:255},footStyles:{fillColor:[238,241,244],textColor:20,fontStyle:'bold'},columnStyles:{2:{cellWidth:32},3:{halign:'right',cellWidth:18}}});
+  return pdf.output('arraybuffer');
+}
 function relevePDF(cid){
   const c=cli(cid)||{},p=paysByCode(c.pays),s=S.societe,vs=openOf(cid);const {jsPDF}=window.jspdf;const pdf=new jsPDF({unit:'mm',format:'a4'});
   const txt=x=>String(x??'').replace(/[  ]/g,' ').replace(/□/g,'/').replace(/[−–]/g,'-');const eur=n=>txt(money(n));
@@ -1840,6 +2025,8 @@ function venteDetail(id,tab){
       ${e.poids&&!(e.colis&&e.colis.length)?`<p class="hint" style="margin:0">Ancienne saisie : ${esc(e.poids)}</p>`:''}
     </div></fieldset>
     ${dhlBlock(v)}
+    <div class="dz-docs"><div><b>Documents pour la douane</b><span class="sub">Facture commerciale bilingue et liste de colisage, à joindre au colis DHL. Pensez à enregistrer les colis avant.</span></div>
+      <span class="row-btns"><button class="btn small" data-act="ci-pdf" data-id="${v.id}">Facture commerciale</button><button class="btn small" data-act="pl-pdf" data-id="${v.id}">Liste de colisage</button></span></div>
     <div class="track-box">${link?`<div><b>Suivre le colis</b><span class="sub">${esc(e.transporteur||'DHL')} · <span class="mono">${esc(e.suivi)}</span></span></div><a class="btn primary" href="${link}" target="_blank" rel="noopener">Ouvrir le suivi ${esc(e.transporteur||'DHL')} ↗</a>`
       :`<span class="muted">Saisissez le n° de suivi puis enregistrez : un bouton ouvrira directement le suivi du colis sur le site du transporteur.</span>`}</div>`;
   }
@@ -1896,11 +2083,57 @@ function dhlBlock(v){
 }
 
 /* ---------- Paramètres ---------- */
+/* ---------- Export comptable (FEC) ----------
+   Écritures : ventes et avoirs (journal VT), encaissements et remboursements (BQ), factures fournisseurs (AC) et leurs paiements (BQ). */
+const CPT_DEF={client:'411000',vFR:'707100',vUE:'707200',vEX:'707300',tvaC:'445710',banque:'512000',caisse:'530000',four:'401000',achat:'607000',tvaD:'445660'};
+const CPT_LIB={client:'Clients',vFR:'Ventes de marchandises France',vUE:'Ventes de marchandises UE',vEX:'Ventes de marchandises export',tvaC:'TVA collectée',banque:'Banque',caisse:'Caisse',four:'Fournisseurs',achat:'Achats de marchandises',tvaD:'TVA déductible'};
+const cpt=()=>({...CPT_DEF,...(S.societe.comptes||{})});
+let cptPer=null;
+function comptaPanel(){
+  const k=cpt(),y=new Date().getFullYear();cptPer=cptPer||{du:`${y}-01-01`,au:isoD(new Date())};
+  return`<section class="panel" id="cpt-panel"><h3>Export comptable</h3><p class="muted" style="margin-bottom:12px">Fichier des écritures comptables (FEC) à transmettre à votre comptable : ventes, avoirs, encaissements, factures fournisseurs et leurs paiements.</p>
+  <div class="form-row"><label>Du<input type="date" id="cpt-du" value="${cptPer.du}"></label><label>Au<input type="date" id="cpt-au" value="${cptPer.au}"></label></div>
+  <div class="row-btns" style="justify-content:flex-start;margin:12px 0"><button class="btn primary" data-act="cpt-fec">Télécharger le FEC (.txt)</button><button class="btn" data-act="cpt-csv">Écritures pour Excel (.csv)</button></div>
+  <details><summary>Numéros de comptes</summary><div class="etq-perso" style="grid-template-columns:repeat(auto-fill,minmax(180px,1fr))">${Object.keys(CPT_DEF).map(x=>`<label>${CPT_LIB[x]}<input class="mono-in" data-cpt="${x}" value="${esc(k[x])}"></label>`).join('')}</div>
+  <p class="hint">Les clients et fournisseurs sont en comptes auxiliaires (CL0001…, code fournisseur). Validez les comptes avec votre comptable avant le premier export.</p></details></section>`;
+}
+function ecritures(du,au){
+  const k=cpt(),E=[],a=new Date(du+'T00:00:00'),b=addDays(new Date(au+'T00:00:00'),1),inP=d=>{const x=new Date(d);return x>=a&&x<b};
+  const vente=r=>r==='fr'?'vFR':r==='ue'?'vUE':'vEX';
+  const push=(j,date,piece,lib,lines)=>{lines.filter(l=>Math.abs(l.d||0)>0.004||Math.abs(l.c||0)>0.004).forEach(l=>E.push({j,date,piece,lib,...l}))};
+  const auxC=c=>({aux:c?codeOf(c):'',auxLib:c?c.nom:''});
+  S.ventes.filter(v=>inP(v.date)).forEach(v=>{const c=cli(v.clientId);push('VT',v.date,v.facture,'Facture '+v.facture+' '+(c?c.nom:''),[
+    {cpt:k.client,cptLib:CPT_LIB.client,...auxC(c),d:v.ttc},{cpt:k[vente(regOf(v))],cptLib:CPT_LIB[vente(regOf(v))],c:v.ht},{cpt:k.tvaC,cptLib:CPT_LIB.tvaC,c:v.tva||0}])});
+  S.avoirs.filter(x=>inP(x.date)).forEach(x=>{const c=cli(x.clientId);push('VT',x.date,x.num,'Avoir '+x.num+' sur '+x.facture,[
+    {cpt:k[vente(x.regime)],cptLib:CPT_LIB[vente(x.regime)],d:x.ht},{cpt:k.tvaC,cptLib:CPT_LIB.tvaC,d:x.tva||0},{cpt:k.client,cptLib:CPT_LIB.client,...auxC(c),c:x.ttc}])});
+  S.reglements.filter(r=>inP(r.date)).forEach(r=>{const v=S.ventes.find(x=>x.id===r.venteId),c=cli(r.clientId),tr=r.mode==='Espèces'?'caisse':'banque',m=Math.abs(r.montant),neg=r.montant<0;
+    push('BQ',r.date,v?v.facture:'',(neg?'Remboursement ':'Règlement ')+(v?v.facture:'')+' '+(c?c.nom:'')+(r.mode?' ('+r.mode+')':''),neg?
+      [{cpt:k.client,cptLib:CPT_LIB.client,...auxC(c),d:m},{cpt:k[tr],cptLib:CPT_LIB[tr],c:m}]:[{cpt:k[tr],cptLib:CPT_LIB[tr],d:m},{cpt:k.client,cptLib:CPT_LIB.client,...auxC(c),c:m}])});
+  (S.facturesF||[]).forEach(f=>{const fo=fourOf(f.fournisseurId),aux={aux:fo?fcode(fo):'',auxLib:fo?fo.nom:''};
+    if(inP(f.date))push('AC',f.date,f.ref||f.id,'Facture '+(f.ref||'')+' '+(fo?fo.nom:''),[{cpt:k.achat,cptLib:CPT_LIB.achat,d:f.ht||0},{cpt:k.tvaD,cptLib:CPT_LIB.tvaD,d:f.tva||0},{cpt:k.four,cptLib:CPT_LIB.four,...aux,c:f.ttc||0}]);
+    (f.paiements||[]).filter(pmt=>inP(pmt.date)).forEach(pmt=>{const tr=pmt.mode==='Espèces'?'caisse':'banque';push('BQ',pmt.date,f.ref||f.id,'Paiement '+(f.ref||'')+' '+(fo?fo.nom:''),[{cpt:k.four,cptLib:CPT_LIB.four,...aux,d:pmt.montant},{cpt:k[tr],cptLib:CPT_LIB[tr],c:pmt.montant}])})});
+  E.sort((x,y)=>x.j.localeCompare(y.j)||x.date.localeCompare(y.date)||String(x.piece).localeCompare(String(y.piece)));
+  const num={};let last='';E.forEach(e=>{const key=e.j+'|'+e.date+'|'+e.piece+'|'+e.lib;if(key!==last){num[e.j]=(num[e.j]||0)+1;last=key}e.num=e.j+String(num[e.j]).padStart(5,'0')});
+  return E;
+}
+const JLIB={VT:'Journal des ventes',AC:'Journal des achats',BQ:'Journal de banque'};
+function exportFEC(csv){
+  const du=$('#cpt-du').value,au=$('#cpt-au').value;if(!du||!au||du>au){toast('Choisissez une période valide.');return}
+  cptPer={du,au};const E=ecritures(du,au);if(!E.length){toast('Aucune écriture sur cette période.');return}
+  const d8=x=>isoD(x).replace(/-/g,''),amt=n=>n?r2(n).toFixed(2).replace('.',','):'0,00',now=d8(new Date());
+  const head=['JournalCode','JournalLib','EcritureNum','EcritureDate','CompteNum','CompteLib','CompAuxNum','CompAuxLib','PieceRef','PieceDate','EcritureLib','Debit','Credit','EcritureLet','DateLet','ValidDate','Montantdevise','Idevise'];
+  const rows=E.map(e=>[e.j,JLIB[e.j],e.num,d8(e.date),e.cpt,e.cptLib,e.aux||'',e.auxLib||'',e.piece,d8(e.date),e.lib,amt(e.d),amt(e.c),'','',now,'','']);
+  const D=r2(E.reduce((t,e)=>t+(e.d||0),0)),C=r2(E.reduce((t,e)=>t+(e.c||0),0));
+  if(csv)offerFile(`Ecritures comptables ${du} au ${au}.csv`,csvOf([head,...rows]));
+  else{const clean=x=>String(x??'').replace(/[\t\r\n|]/g,' ');offerFile(`${(S.societe.siren||'000000000').replace(/\D/g,'')}FEC${au.replace(/-/g,'')}.txt`,[head,...rows].map(r=>r.map(clean).join('\t')).join('\r\n'))}
+  if(Math.abs(D-C)>0.01)toast(`Attention : total débit ${money(D)} ≠ crédit ${money(C)}`);
+}
+
 /* ---------- Connexion DIOPTRA ----------
    La clé d'intégration est gardée par le serveur : le navigateur ne voit que « clé enregistrée oui / non ». */
 let DIO={configured:false,loaded:false,url:'',keySet:false,keyHint:''};
 async function loadDio(){try{const r=await fetch('/api/dioptra/config',{credentials:'same-origin'});if(r.ok){DIO={...await r.json(),loaded:true}}}catch(e){}return DIO}
-loadDio().then(()=>{if(location.hash==='#parametres'&&!$('#dio-key')?.value)render()});
+Promise.all([loadDio(),loadCles()]).then(()=>{if(location.hash==='#parametres'&&!$('#dio-key')?.value)render()});
 const dtF=new Intl.DateTimeFormat('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
 function dioBlock(v,c){
   const mag=c&&c.dioptraMagasin,d=v.dioptra||{};
@@ -1967,7 +2200,8 @@ function viewParametres(){
     <fieldset>
       <label>SIREN ou SIRET <span class="req">*</span><input id="s-siren" value="${v('siren')}" class="mono-in"></label>
       <label>RCS<input id="s-rcs" value="${v('rcs')}" placeholder="Ex. RCS Paris"></label>
-      <label class="full">N° TVA intracommunautaire<input id="s-tva" value="${v('tvaIntra')}" class="mono-in" placeholder="FR…"></label>
+      <label>N° TVA intracommunautaire<input id="s-tva" value="${v('tvaIntra')}" class="mono-in" placeholder="FR…"></label>
+      <label>N° EORI<input id="s-eori" value="${v('eori')}" class="mono-in" placeholder="FR + SIRET"><span class="hint">Obligatoire pour exporter hors UE ; figure sur les documents de douane</span></label>
     </fieldset></section>
   <section class="panel"><h3>Banque et facturation</h3>
     <fieldset>
@@ -1980,6 +2214,9 @@ function viewParametres(){
       <label>Transporteur par défaut<select id="s-transp">${Object.keys(TRANSPORTEURS).map(t=>`<option ${t===(s.transporteur||'DHL')?'selected':''}>${t}</option>`).join('')}</select></label>
     </fieldset></section>
   <div class="settings-save"><button class="btn primary" data-act="set-save">Enregistrer les paramètres</button></div>
+  ${comptaPanel()}
+  ${clesPanel()}
+  <section class="panel"><div class="row-between"><div><h3 style="margin:0">Historique des modifications</h3><p class="muted" style="margin:4px 0 0">Qui a fait quoi, et quand, sur les clients, montures, ventes, règlements, paramètres…</p></div><a class="btn" href="#historique">Consulter</a></div></section>
   <section class="panel" id="dio-panel"><h3>Connexion DIOPTRA</h3>
     <p class="muted" style="margin-bottom:12px">Pour envoyer les factures en réception de stock dans DIOPTRA. La clé est gardée par le serveur de Prismea et n'est jamais affichée.</p>
     <fieldset>
@@ -2255,11 +2492,18 @@ document.addEventListener('click',e=>{
       (async()=>{try{if(assetsNS)await assetsNS.delete(did)}catch(e){}
         v.documents=(v.documents||[]).filter(d=>d.id!==did);save();render();venteDetail(id,'documents');toast('Document retiré')})();break}
     case'set-save':{
-      const m={nom:'s-nom',forme:'s-forme',capital:'s-capital',adresse:'s-adresse',cp:'s-cp',ville:'s-ville',tel:'s-tel',email:'s-email',siren:'s-siren',rcs:'s-rcs',tvaIntra:'s-tva',iban:'s-iban',emailBanque:'s-mailbq',bic:'s-bic',banque:'s-banque'};
+      const m={nom:'s-nom',forme:'s-forme',capital:'s-capital',adresse:'s-adresse',cp:'s-cp',ville:'s-ville',tel:'s-tel',email:'s-email',siren:'s-siren',rcs:'s-rcs',tvaIntra:'s-tva',eori:'s-eori',iban:'s-iban',emailBanque:'s-mailbq',bic:'s-bic',banque:'s-banque'};
       Object.entries(m).forEach(([k,i])=>S.societe[k]=$('#'+i).value.trim());
       S.societe.delai=Math.max(0,Math.round(+$('#s-delai').value||0));S.societe.transporteur=$('#s-transp').value;S.societe.fcfa=$('#s-fcfa').checked;
       if(!S.societe.nom||!S.societe.adresse||!S.societe.siren)toast('Paramètres enregistrés. Pensez à compléter la raison sociale, l\'adresse et le SIREN.');else toast('Paramètres enregistrés');
       save();break}
+    case'cpt-fec':exportFEC(false);break;
+    case'cle-new':b.disabled=true;fetch('/api/integration/cles',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({nom:'DIOPTRA'})}).then(r=>r.json()).then(async j=>{await loadCles();render();const o=$('#cle-new-out');if(o)o.innerHTML=`Clé créée : <code style="user-select:all">${esc(j.cle)}</code><br>Copiez-la maintenant dans DIOPTRA : elle ne sera plus affichée.`}).catch(()=>{b.disabled=false;toast('Création impossible.')});break;
+    case'cle-actif':fetch('/api/integration/cles/'+encodeURIComponent(id)+'/actif',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({actif:b.dataset.on==='1'})}).then(()=>loadCles()).then(()=>render());break;
+    case'cc-doc':ccToDoc(id,b.dataset.k);break;
+    case'h-more':loadHist(true);break;
+    case'cc-arch':{const cc=S.commandesC.find(x=>x.id===id);if(cc){cc.statut='archivee';save();render()}break}
+    case'cpt-csv':exportFEC(true);break;
     case'dio-save':case'dio-del':{
       const del=b.dataset.act==='dio-del';if(del&&!b.dataset.sure){b.dataset.sure='1';b.textContent='Confirmer le retrait de la clé';break}
       const key=del?'':$('#dio-key').value.trim();if(!del&&key&&!/^dpt_/.test(key)){toast('La clé d\'intégration doit commencer par dpt_');break}
@@ -2275,6 +2519,9 @@ document.addEventListener('click',e=>{
     case'k-open':venteDetail(id);break;
     case'k-pay':payForm(id);break;
     case'rel-pdf':downloadReleve(id);break;
+    case'ci-pdf':case'pl-pdf':{const v=S.ventes.find(x=>x.id===id);if(!v)break;if(!window.jspdf){toast('Le module PDF n\'a pas pu se charger.');break}
+      const c=cli(v.clientId)||{},nm=(c.nom||'client').replace(/[\\/:*?"<>|]/g,'');
+      if(b.dataset.act==='ci-pdf')offerFile(`Facture commerciale ${v.facture} - ${nm}.pdf`,commercialInvoicePDF(v));else offerFile(`Liste de colisage ${v.facture} - ${nm}.pdf`,packingListPDF(v));break}
     case'rel-send':relanceForm(id);break;
     case'k-pdf':downloadInvoice(id);break;
     case'k-dtva':dossierTVA(journalRows(),`Dossier TVA - ${periodLabel()}.csv`);break;
@@ -3077,6 +3324,9 @@ function render(){
   else if(r.startsWith('client-'))$('#app').innerHTML=viewClient(r.slice(7));
   else if(r.startsWith('vente-')||r.startsWith('devis-')){const k=r.slice(0,5);$('#app').innerHTML=viewDoc(k,r.slice(6));if(doc){drawDoc();$('#scan')?.focus()}}
   else if(r==='stock'){$('#app').innerHTML=viewStock();fillStock()}
+  else if(r==='commandes-recues')$('#app').innerHTML=viewCommandesRecues();
+  else if(r==='historique'){$('#app').innerHTML=viewHistorique();if(!HIST.rows.length&&!HIST.loading&&!HIST.loaded){HIST.loaded=true;loadHist()}}
+  else if(r==='inventaire'){$('#app').innerHTML=viewInventaire();$('#inv-scan')?.focus()}
   else if(r==='reassort'){$('#app').innerHTML=viewReassort();bindReassort()}
   else if(r==='entree'){$('#app').innerHTML=viewEntree();drawRec();$('#rscan')?.focus()}
   else if(r==='catalogue'){$('#app').innerHTML=viewCatalogue();bindImport();if(imp)drawImport()}
@@ -3096,6 +3346,9 @@ document.addEventListener('change',e=>{
   else if(t.dataset.drem&&doc){const l=doc.lignes.find(x=>x.montureId===t.dataset.drem);if(l){let v=Math.max(0,Math.round((+String(t.value).replace(',','.')||0)*100)/100);v=isE(l.remT)?Math.min(v,+l.pu||0):Math.min(100,v);if(v)l.rem=v;else delete l.rem;drawDoc()}}
   else if(t.id==='d-rem'){const v=Math.max(0,Math.round((+String(t.value).replace(',','.')||0)*100)/100);doc.remise=isE(doc.remiseT)?v:Math.min(100,v);drawDoc()}
   else if(t.id==='d-pay'){doc.paiement=t.value;drawDoc()}
+  else if(t.id==='h-user'||t.id==='h-kind'){HIST[t.id==='h-user'?'user':'kind']=t.value;HIST.rows=[];loadHist()}
+  else if(t.dataset&&t.dataset.ccclient){const cc=S.commandesC.find(x=>x.id===t.dataset.ccclient);if(cc){cc.clientId=t.value;save();render()}}
+  else if(t.dataset&&t.dataset.cpt){S.societe.comptes={...(S.societe.comptes||{}),[t.dataset.cpt]:t.value.trim()||CPT_DEF[t.dataset.cpt]};save();toast('Compte enregistré')}
   else if(t.id==='d-banque'&&doc)doc.banque=t.value.trim();
   else if(t.id==='d-ref'&&doc)doc.ref=t.value.trim();
   else if(t.id==='d-val')doc.validite=t.value;
@@ -3103,6 +3356,7 @@ document.addEventListener('change',e=>{
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape'&&!$('#modal').hidden)closeModal();
   if(e.key==='Enter'&&e.target.id==='scan'){e.preventDefault();scanAdd()}
+  if(e.key==='Enter'&&e.target.id==='inv-scan'){e.preventDefault();invScan()}
   if(e.key==='Enter'&&e.target.dataset&&e.target.dataset.drem){e.preventDefault();e.target.blur();const sc=$('#scan');if(sc)sc.focus()}
   if(e.key==='Enter'&&e.target.matches('tr.click'))location.hash='client-'+e.target.dataset.id;
 });
