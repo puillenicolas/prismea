@@ -432,3 +432,8 @@ tr.avoir-row td b{color:var(--ink)}
 .hist-det{font-size:12.5px;color:var(--muted);max-width:420px}
 .hist-ch{display:inline-block;margin:0 10px 2px 0}
 .hist-ch b{color:var(--ink);font-weight:600}
+/* Suites d'une vente */
+.next-grid{display:grid;gap:12px}
+.next-card{display:flex;flex-direction:column;gap:6px;padding:14px 16px;border:1px solid var(--line);border-radius:10px}
+.next-card>span{color:var(--muted);font-size:14px}
+.next-card .row-btns{justify-content:flex-start;margin-top:4px}

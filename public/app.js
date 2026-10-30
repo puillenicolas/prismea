@@ -399,7 +399,70 @@ async function validateDoc(){
   }
   const kind=doc.kind,cid=doc.clientId,num=kind==='vente'?S.ventes[S.ventes.length-1].num:S.devis[S.devis.length-1].num;
   if(doc.fromCommande){const cc=(S.commandesC||[]).find(x=>x.id===doc.fromCommande);if(cc){cc.statut='traitee';cc.traiteeLe=new Date().toISOString();cc[kind==='vente'?'venteId':'devisId']=(kind==='vente'?S.ventes:S.devis).slice(-1)[0].id;cc.clientId=cid}}
-  save();doc=null;location.hash='client-'+cid;toast((kind==='vente'?'Vente ':'Devis ')+num+' enregistré'+(kind==='vente'?'e':''));
+  const lastId=(kind==='vente'?S.ventes:S.devis).slice(-1)[0].id;
+  save();doc=null;location.hash='client-'+cid;
+  setTimeout(()=>kind==='vente'?apresVente(lastId):apresDevis(lastId),80);
+}
+/* Après la validation d'une vente : les suites possibles (expédition, BL au magasin, facture) */
+function apresVente(id){
+  const v=S.ventes.find(x=>x.id===id);if(!v)return;const c=cli(v.clientId)||{},mag=c.dioptraMagasin,nb=v.lignes.reduce((t,l)=>t+l.qte,0);
+  openModal(`Vente ${v.num} enregistrée`,`Facture ${v.facture} · ${c.nom||''} · ${nb} monture${nb>1?'s':''} · ${money(v.ttc)}`,`
+  <div class="next-grid">
+   <div class="next-card"><b>Créer l'expédition DHL</b><span>Saisir les colis (poids, dimensions), préparer la facture commerciale et la liste de colisage, puis noter le n° de lettre de transport pour le suivi.</span>
+    <div class="row-btns"><button class="btn primary small" data-act="nx-exp" data-id="${v.id}">Préparer l'expédition</button><a class="btn small" href="https://mydhl.express.dhl/" target="_blank" rel="noopener">Ouvrir MyDHL+</a></div></div>
+   <div class="next-card"><b>Envoyer le BL au magasin</b><span>${mag?`Le magasin « ${esc(mag)} » utilise DIOPTRA : les montures y arriveront en réception de stock.`:'Bon de livraison sans prix, avec les codes EAN, à envoyer par e-mail ou à joindre au colis.'}</span>
+    <div class="row-btns">${mag?`<button class="btn primary small" data-act="dio-send" data-id="${v.id}" ${DIO.configured?'':'disabled title="Connexion DIOPTRA à régler dans les Paramètres"'}>${v.dioptra&&v.dioptra.statut==='envoye'?'Renvoyer à DIOPTRA':'Envoyer à DIOPTRA'}</button>`:''}<button class="btn small${mag?'':' primary'}" data-act="bl-mail" data-id="${v.id}">Par e-mail</button><button class="btn small" data-act="bl-pdf" data-id="${v.id}">Télécharger le BL</button></div>
+    ${v.dioptra&&v.dioptra.statut==='envoye'?`<span class="sub" style="color:var(--ok)">Envoyée à DIOPTRA le ${dtF.format(new Date(v.dioptra.le))}</span>`:''}</div>
+   <div class="next-card"><b>Facture</b><span>${resteOf(v)>0.005?`Reste à encaisser : ${money(resteOf(v))}.`:'Facture réglée.'}</span>
+    <div class="row-btns"><button class="btn small" data-act="k-pdf" data-id="${v.id}">Télécharger la facture</button>${resteOf(v)>0.005?`<button class="btn small" data-act="k-pay" data-id="${v.id}">Encaisser</button>`:''}<button class="btn small" data-act="k-open" data-id="${v.id}">Ouvrir la vente</button></div></div>
+  </div>`,
+  `<button class="btn" data-act="sale" data-id="${v.clientId}" style="margin-right:auto">Nouvelle vente pour ce client</button><button class="btn primary" data-act="close">Terminer</button>`);
+  $('.modal-card').classList.add('wide');
+}
+function apresDevis(id){
+  const d=S.devis.find(x=>x.id===id);if(!d)return;toast(`Devis ${d.num} enregistré`);showDoc(id);
+}
+/* Bon de livraison (sans prix) */
+const blFile=v=>`BL ${v.num} - ${((cli(v.clientId)||{}).nom||'client').replace(/[\\/:*?"<>|]/g,'')}.pdf`;
+function blPDF(v){
+  const {jsPDF}=window.jspdf;const pdf=new jsPDF({unit:'mm',format:'a4'});
+  const txt=x=>String(x??'').replace(/[\u00A0\u202F]/g,' ').replace(/□/g,'/').replace(/[−–]/g,'-');
+  const s=S.societe,c=cli(v.clientId)||{},p=paysByCode(c.pays),e=expOf(v);const L=16,R=194;let y=18;
+  pdf.setFont('helvetica','bold');pdf.setFontSize(15);pdf.text(txt(s.nom||'Votre société'),L,y);
+  pdf.setFont('helvetica','normal');pdf.setFontSize(8.5);pdf.setTextColor(80);
+  const sl=[s.adresse,[s.cp,s.ville].filter(Boolean).join(' '),[s.tel,s.email].filter(Boolean).join(' · ')].filter(Boolean);sl.forEach((t,i)=>pdf.text(txt(t),L,y+5+i*4));
+  pdf.setTextColor(0);pdf.setFont('helvetica','bold');pdf.setFontSize(17);pdf.text('BON DE LIVRAISON',R,y,{align:'right'});
+  pdf.setFontSize(10);pdf.text(txt('N° BL '+v.num),R,y+7,{align:'right'});pdf.setFont('helvetica','normal');pdf.setFontSize(9);
+  pdf.text(txt('Date : '+dF.format(new Date(v.date))),R,y+12,{align:'right'});pdf.text(txt('Facture '+v.facture),R,y+16.5,{align:'right'});if(e.suivi)pdf.text(txt('LTA '+(e.transporteur||'DHL')+' '+e.suivi),R,y+21,{align:'right'});
+  y=Math.max(y+5+sl.length*4,y+24)+8;
+  pdf.setFillColor(246,248,250);pdf.roundedRect(110,y,R-110,30,2,2,'F');pdf.setFontSize(8);pdf.setTextColor(100);pdf.text('LIVRÉ À',114,y+6);pdf.setTextColor(0);
+  pdf.setFont('helvetica','bold');pdf.setFontSize(10.5);pdf.text(txt(c.nom||''),114,y+12);pdf.setFont('helvetica','normal');pdf.setFontSize(8.8);
+  [c.dioptraMagasin?(/^magasin/i.test(c.dioptraMagasin)?'':'Magasin ')+c.dioptraMagasin:'',...(c.adresse||'').split('\n'),[c.ville,p?p[1]:''].filter(Boolean).join(', '),c.tel?fmtTel(c.pays,c.tel):''].filter(Boolean).slice(0,4).forEach((t,i)=>pdf.text(txt(t),114,y+17+i*4.2));
+  y+=38;
+  pdf.autoTable({startY:y,head:[['Réf.','Désignation','EAN','Qté','Reçu']],body:v.lignes.map(l=>[txt(l.etiquette),txt(l.designation+(l.detail?' - '+l.detail:'')),txt((mon(l.montureId)||{}).ean||''),String(l.qte),'']),
+    foot:[['','Total','',String(v.lignes.reduce((t,l)=>t+l.qte,0)),'']],margin:{left:L,right:16},styles:{font:'helvetica',fontSize:8.8,cellPadding:2.2},headStyles:{fillColor:[10,102,112],textColor:255},footStyles:{fillColor:[238,241,244],textColor:20,fontStyle:'bold'},
+    columnStyles:{0:{cellWidth:20},2:{cellWidth:32},3:{halign:'right',cellWidth:14},4:{cellWidth:16}}});
+  y=pdf.lastAutoTable.finalY+8;if(y>250){pdf.addPage();y=20}
+  pdf.setFontSize(8.6);pdf.text(pdf.splitTextToSize(txt('Merci de vérifier la marchandise à réception et de signaler toute différence sous 48 heures.'),R-L),L,y);y+=10;
+  pdf.setTextColor(100);pdf.text('Reçu le, nom et signature',L,y);pdf.setDrawColor(200);pdf.rect(L,y+2,80,22);pdf.setTextColor(0);
+  return pdf.output('arraybuffer');
+}
+function blMail(id){
+  const v=S.ventes.find(x=>x.id===id);if(!v)return;const c=cli(v.clientId)||{},mail=window.__PRISMEA__.mail||{},sig=(window.__PRISMEA__.user||{}).nom||'',nb=v.lignes.reduce((t,l)=>t+l.qte,0),e=expOf(v);
+  const msg=`Bonjour${c.contact?' '+c.contact:''},\n\nVeuillez trouver ci-joint le bon de livraison ${v.num} (${nb} monture${nb>1?'s':''}, facture ${v.facture}).${e.suivi?`\nN° de suivi ${e.transporteur||'DHL'} : ${e.suivi}`:''}\n\nMerci de vérifier la marchandise à réception.\n\nCordialement,\n${sig}\n${S.societe.nom||''}`;
+  openModal('Envoyer le bon de livraison',`${c.nom||''} · BL ${v.num}`,`<fieldset><label class="full">Destinataire<input id="bl-to" type="email" value="${esc(c.email||'')}" placeholder="magasin@exemple.com"></label>
+    <label class="full">Objet<input id="bl-subj" value="${esc(`Bon de livraison ${v.num} – ${S.societe.nom||''}`)}"></label><label class="full">Message<textarea id="bl-msg" rows="9">${esc(msg)}</textarea></label></fieldset>
+    ${mail.configured?'':'<div class="lu-box warn">L\'envoi direct n\'est pas encore activé : le bouton télécharge le BL et ouvre votre messagerie.</div>'}`,
+    `<button class="btn" data-act="nx-back" data-id="${v.id}">Retour</button><button class="btn primary" id="bl-ok">${mail.configured?'Envoyer':'Télécharger et ouvrir ma messagerie'}</button>`,()=>{
+    $('#bl-ok').onclick=async()=>{const to=$('#bl-to').value.trim(),subj=$('#bl-subj').value.trim(),text=$('#bl-msg').value;
+      if(!/^\S+@\S+\.\S+$/.test(to)){toast('Saisissez une adresse e-mail valide.');return}
+      if(!window.jspdf){toast('Le module PDF n\'a pas pu se charger.');return}
+      const b=$('#bl-ok');b.disabled=true;const ab=blPDF(v);
+      try{if(mail.configured){const r=await fetch('/api/mail',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({to,subject:subj,text,replyTo:S.societe.email||'',attachments:[{name:blFile(v),content:abToB64(ab)}]})});if(!r.ok)throw 0}
+        else{await offerFile(blFile(v),new Blob([ab],{type:'application/pdf'}));const a=document.createElement('a');a.href=`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(text)}`;a.click()}
+        if(!c.email&&c.id){const cc=cli(c.id);if(cc)cc.email=to}v.blEnvoye={le:new Date().toISOString(),a:to};save();apresVente(v.id);toast(mail.configured?`BL envoyé à ${to}`:'BL téléchargé : joignez-le au message')}
+      catch(x){b.disabled=false;toast('L\'envoi a échoué. Réessayez.')}};
+  });
 }
 function showDoc(id){
   if(S.ventes.some(x=>x.id===id)){venteDetail(id);return}
@@ -2033,8 +2096,8 @@ function venteDetail(id,tab){
   openModal('Facture '+v.facture,`${c?c.nom:''} · vente ${v.num} du ${dF.format(new Date(v.date))}`,
   `<div class="tabs" role="tablist">${tb('facture','Facture')}${tb('reglements','Règlements',regs.length)}${tb('documents','Documents',docs.length)}${tb('expedition','Expédition')}${regOf(v)!=='fr'?`<button role="tab" aria-selected="${vdTab==='douane'}" data-act="vd-tab" data-k="douane" data-id="${v.id}">Douane et TVA ${justifStatut(v)==='complet'?'<span class="tab-n ok-n">✓</span>':`<span class="tab-n warn-n">${justifs(v).filter(x=>x.ok).length}/${justifs(v).length}</span>`}</button>`:''}${expPill(v)?'<span class="tab-pill">'+expPill(v)+'</span>':''}</div>${body}`,
   vdTab==='douane'&&regOf(v)!=='fr'?`<button class="btn" data-act="close">Fermer</button><button class="btn primary" data-act="vd-dousave" data-id="${v.id}">Enregistrer</button>`
-  :vdTab==='expedition'?`<button class="btn" data-act="close">Fermer</button><button class="btn primary" data-act="vd-expsave" data-id="${v.id}">Enregistrer l'expédition</button>`
-  :`<button class="btn" data-act="k-pdf" data-id="${v.id}" ${dlNS?'':'disabled title="Téléchargement indisponible dans cette vue"'}>Télécharger la facture (PDF)</button>${resteOf(v)>0.005?`<button class="btn primary" data-act="k-pay" data-id="${v.id}">Encaisser</button>`:'<button class="btn primary" data-act="close">Fermer</button>'}`);
+  :vdTab==='expedition'?`<button class="btn" data-act="nx-back" data-id="${v.id}" style="margin-right:auto">← Suites de la vente</button><button class="btn" data-act="close">Fermer</button><button class="btn primary" data-act="vd-expsave" data-id="${v.id}">Enregistrer l'expédition</button>`
+  :`<button class="btn" data-act="nx-back" data-id="${v.id}" style="margin-right:auto">Expédition et BL…</button><button class="btn" data-act="k-pdf" data-id="${v.id}" ${dlNS?'':'disabled title="Téléchargement indisponible dans cette vue"'}>Télécharger la facture (PDF)</button>${resteOf(v)>0.005?`<button class="btn primary" data-act="k-pay" data-id="${v.id}">Encaisser</button>`:'<button class="btn primary" data-act="close">Fermer</button>'}`);
   $('.modal-card').classList.add('wide');
   const f=$('#vd-file'),dz=$('#vd-drop');
   if(f){f.addEventListener('change',()=>{uploadDocs(v.id,[...f.files]);f.value=''});
@@ -2172,7 +2235,7 @@ async function dioSend(id,force,btn){
   else if(j.error==='non_configure')toast('Réglez la connexion DIOPTRA dans les Paramètres.');
   else if(r.status===409)toast('Déjà réceptionnée dans DIOPTRA : la facture ne peut plus être renvoyée.');
   else toast('Envoi refusé : '+dioMsg(j.dioptra&&j.dioptra.erreur?j.dioptra.erreur:{http:j.http||r.status,message:j.message}));
-  if(!$('#modal').hidden)venteDetail(id,'facture');
+  if(!$('#modal').hidden){if(document.querySelector('#m-body .next-grid'))apresVente(id);else venteDetail(id,'facture')}
 }
 async function dioDownload(id){
   const v=S.ventes.find(x=>x.id===id);if(!v)return;
@@ -2519,6 +2582,10 @@ document.addEventListener('click',e=>{
     case'k-open':venteDetail(id);break;
     case'k-pay':payForm(id);break;
     case'rel-pdf':downloadReleve(id);break;
+    case'nx-exp':venteDetail(id,'expedition');break;
+    case'nx-back':apresVente(id);break;
+    case'bl-mail':blMail(id);break;
+    case'bl-pdf':{const v=S.ventes.find(x=>x.id===id);if(!v)break;if(!window.jspdf){toast('Le module PDF n\'a pas pu se charger.');break}offerFile(blFile(v),blPDF(v));break}
     case'ci-pdf':case'pl-pdf':{const v=S.ventes.find(x=>x.id===id);if(!v)break;if(!window.jspdf){toast('Le module PDF n\'a pas pu se charger.');break}
       const c=cli(v.clientId)||{},nm=(c.nom||'client').replace(/[\\/:*?"<>|]/g,'');
       if(b.dataset.act==='ci-pdf')offerFile(`Facture commerciale ${v.facture} - ${nm}.pdf`,commercialInvoicePDF(v));else offerFile(`Liste de colisage ${v.facture} - ${nm}.pdf`,packingListPDF(v));break}
